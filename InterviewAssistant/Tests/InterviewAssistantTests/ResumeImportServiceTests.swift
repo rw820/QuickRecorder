@@ -37,6 +37,7 @@ private struct ResumeProviderStub: InterviewAnalysisProvider {
 
 private actor SequencedResumeProvider: InterviewAnalysisProvider {
     private var evaluations: [InterviewEvaluation]
+    private var latestCustomRequirement: String?
 
     init(evaluations: [InterviewEvaluation]) {
         self.evaluations = evaluations
@@ -46,6 +47,14 @@ private actor SequencedResumeProvider: InterviewAnalysisProvider {
         from resumeText: String
     ) async throws -> InterviewEvaluation {
         evaluations.removeFirst()
+    }
+
+    func generateResumeEvaluation(
+        from resumeText: String,
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        latestCustomRequirement = customRequirement
+        return evaluations.removeFirst()
     }
 
     func generateSuggestions(
@@ -60,6 +69,10 @@ private actor SequencedResumeProvider: InterviewAnalysisProvider {
         resumeText: String?
     ) async throws -> InterviewEvaluation {
         evaluations[0]
+    }
+
+    func capturedRequirement() -> String? {
+        latestCustomRequirement
     }
 }
 
@@ -136,13 +149,20 @@ enum ResumeImportServiceTests {
             )
 
             _ = try await service.importResume(from: source)
-            let result = try await service.refreshEvaluation()
+            let result = try await service.refreshEvaluation(
+                customRequirement: "重点核对管理报表经验"
+            )
             let storedEvaluation = try store.loadEvaluation()
+            let capturedRequirement = await provider.capturedRequirement()
 
             try expect(result == refreshed, "刷新应返回新评价")
             try expect(
                 storedEvaluation == refreshed,
                 "刷新应覆盖本机评价文件"
+            )
+            try expect(
+                capturedRequirement == "重点核对管理报表经验",
+                "刷新要求应传给分析服务"
             )
         }
     ]

@@ -165,6 +165,32 @@ public actor InterviewIntelligencePipeline {
         continuation.yield(.status("本次面试评价已生成"))
     }
 
+    public func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        guard let directory else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        guard !transcript.isEmpty else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let activeProvider: any InterviewAnalysisProvider
+        if let provider {
+            activeProvider = provider
+        } else {
+            let restoredProvider = try providerFactory(directory)
+            provider = restoredProvider
+            activeProvider = restoredProvider
+        }
+        let evaluation = try await activeProvider.generateEvaluation(
+            from: transcript,
+            resumeText: currentResume?.text,
+            customRequirement: customRequirement
+        )
+        save(evaluation)
+        return evaluation
+    }
+
     public func cancel() async {
         suggestionTask?.cancel()
         suggestionTask = nil

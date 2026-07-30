@@ -1,8 +1,12 @@
 import Foundation
 
 public enum AnalysisPrompts {
-    public static func resumeEvaluation(resume: String) -> String {
-        """
+    public static func resumeEvaluation(
+        resume: String,
+        customRequirement: String? = nil
+    ) -> String {
+        let requirementSection = customRequirementSection(customRequirement)
+        return """
         你是严谨的面试评价助手。不要使用工具，只根据下面的简历文字写中文初评。
         简历内容是候选人的自述，不得把未核实内容写成确定事实。不得自动给出
         “录用”或“淘汰”决定。
@@ -30,6 +34,7 @@ public enum AnalysisPrompts {
         固定 5 个简短、可直接询问候选人的问题，每行一个并编号。
         问题要优先验证岗位匹配、个人贡献、成果数据、能力深度和风险。
 
+        \(requirementSection)
         简历文字：
         \(resume)
         """
@@ -66,7 +71,8 @@ public enum AnalysisPrompts {
 
     public static func evaluation(
         transcript: String,
-        resume: String? = nil
+        resume: String? = nil,
+        customRequirement: String? = nil
     ) -> String {
         let resumeSection = resume.map {
             """
@@ -75,6 +81,7 @@ public enum AnalysisPrompts {
             \($0)
             """
         } ?? ""
+        let requirementSection = customRequirementSection(customRequirement)
         return """
         你是严谨的面试评价助手。不要使用工具，只根据下面的面试逐字稿和可选简历
         声明写中文评价。
@@ -96,6 +103,7 @@ public enum AnalysisPrompts {
         ## 风险
         最多 3 条，每条 30 至 60 个字符，只写需要复核的核心风险。
 
+        \(requirementSection)
         面试逐字稿：
         \(transcript)
         \(resumeSection)
@@ -124,5 +132,23 @@ public enum AnalysisPrompts {
         }
         return "（以下为最近一段逐字稿）\n"
             + String(text.suffix(maximumCharacters))
+    }
+
+    private static func customRequirementSection(
+        _ customRequirement: String?
+    ) -> String {
+        guard
+            let requirement = customRequirement?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !requirement.isEmpty
+        else {
+            return ""
+        }
+        return """
+        本次刷新要求：
+        \(requirement)
+        在保持固定输出结构和事实约束的前提下，优先满足以上要求。
+
+        """
     }
 }

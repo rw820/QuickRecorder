@@ -19,8 +19,19 @@ public struct ResumeImportResult: Sendable {
 public protocol ResumeImportServicing: Sendable {
     func importResume(from url: URL) async throws -> ResumeImportResult
     func refreshEvaluation() async throws -> InterviewEvaluation
+    func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation
     func restore() async throws -> ResumeImportResult?
     func clear() async throws
+}
+
+public extension ResumeImportServicing {
+    func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        try await refreshEvaluation()
+    }
 }
 
 public actor ResumeImportService: ResumeImportServicing {
@@ -84,13 +95,21 @@ public actor ResumeImportService: ResumeImportServicing {
     }
 
     public func refreshEvaluation() async throws -> InterviewEvaluation {
+        try await refreshEvaluation(customRequirement: nil)
+    }
+
+    public func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
         guard let document = try store.load() else {
             throw CocoaError(.fileNoSuchFile)
         }
         let provider = try providerFactory(store.root)
-        let evaluation = try await provider.generateResumeEvaluation(
-            from: document.text
-        )
+        let evaluation = try await provider
+            .generateResumeEvaluation(
+                from: document.text,
+                customRequirement: customRequirement
+            )
         try store.saveEvaluation(evaluation)
         return evaluation
     }

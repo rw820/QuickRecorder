@@ -12,6 +12,8 @@ struct MainView: View {
     @State private var showsResumeImporter = false
     @State private var showsHistory = false
     @State private var isResumeDropTarget = false
+    @State private var showsEvaluationRefresh = false
+    @State private var evaluationRefreshRequirement = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,6 +54,9 @@ struct MainView: View {
         }
         .sheet(isPresented: $showsHistory) {
             HistoryBrowserView(store: InterviewHistoryStore())
+        }
+        .sheet(isPresented: $showsEvaluationRefresh) {
+            evaluationRefreshSheet
         }
         .overlay {
             if isResumeDropTarget {
@@ -311,25 +316,26 @@ struct MainView: View {
                     detail: "已生成"
                 )
                 Spacer()
-                if controller.evaluationTitle == "简历初评",
-                   controller.resume != nil
+                if controller.canRefreshCurrentEvaluation
+                    || controller.isRefreshingEvaluation
                 {
                     Button {
-                        Task {
-                            await controller.refreshResumeEvaluation()
-                        }
+                        evaluationRefreshRequirement = ""
+                        showsEvaluationRefresh = true
                     } label: {
-                        if controller.isRefreshingResumeEvaluation {
+                        if controller.isRefreshingEvaluation {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
                             Label(
-                                "刷新评价和问题",
+                                controller.evaluationTitle == "简历初评"
+                                    ? "刷新评价和问题"
+                                    : "刷新评价",
                                 systemImage: "arrow.clockwise"
                             )
                         }
                     }
-                    .disabled(controller.isRefreshingResumeEvaluation)
+                    .disabled(controller.isRefreshingEvaluation)
                 }
                 if let directory = controller.lastSessionDirectory {
                     Button("打开本次文件") {
@@ -396,6 +402,57 @@ struct MainView: View {
         )
     }
 
+    private var evaluationRefreshSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(
+                controller.evaluationTitle == "简历初评"
+                    ? "刷新简历评价和问题"
+                    : "刷新面试评价"
+            )
+            .font(.title3.bold())
+
+            Text("可以填写本次要求，不填写则按默认规则刷新。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $evaluationRefreshRequirement)
+                .font(.body)
+                .frame(minHeight: 110)
+                .padding(8)
+                .background(
+                    Color.primary.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.12))
+                }
+
+            HStack {
+                Spacer()
+                Button("取消") {
+                    showsEvaluationRefresh = false
+                }
+                Button("刷新") {
+                    let requirement = evaluationRefreshRequirement
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    showsEvaluationRefresh = false
+                    Task {
+                        await controller.refreshCurrentEvaluation(
+                            customRequirement: requirement.isEmpty
+                                ? nil
+                                : requirement
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
     private func section(
         _ name: String,
         in markdown: String
@@ -451,7 +508,9 @@ struct MainView: View {
         }
         .buttonStyle(.bordered)
         .disabled(
-            controller.state != .idle || controller.isImportingResume
+            controller.state != .idle
+                || controller.isImportingResume
+                || controller.isRefreshingEvaluation
         )
     }
 
@@ -481,15 +540,20 @@ struct MainView: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: [])
-            .disabled(controller.isImportingResume)
+            .disabled(
+                controller.isImportingResume
+                    || controller.isRefreshingEvaluation
+            )
         }
     }
 
     private var recordingStatus: String {
         switch controller.state {
         case .idle:
-            if controller.isRefreshingResumeEvaluation {
-                "正在刷新评价和问题"
+            if controller.isRefreshingEvaluation {
+                controller.evaluationTitle == "简历初评"
+                    ? "正在刷新评价和问题"
+                    : "正在刷新面试评价"
             } else
             if controller.evaluationTitle == "简历初评",
                controller.evaluation != nil

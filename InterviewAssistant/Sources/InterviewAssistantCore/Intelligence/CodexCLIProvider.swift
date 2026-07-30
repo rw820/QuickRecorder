@@ -49,9 +49,20 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
     public func generateResumeEvaluation(
         from resumeText: String
     ) async throws -> InterviewEvaluation {
+        try await generateResumeEvaluation(
+            from: resumeText,
+            customRequirement: nil
+        )
+    }
+
+    public func generateResumeEvaluation(
+        from resumeText: String,
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
         let output = try await run(
             prompt: AnalysisPrompts.resumeEvaluation(
-                resume: String(resumeText.prefix(40_000))
+                resume: String(resumeText.prefix(40_000)),
+                customRequirement: customRequirement
             ),
             model: evaluationModel,
             timeout: 120
@@ -99,13 +110,26 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
         from transcript: [TranscriptLine],
         resumeText: String?
     ) async throws -> InterviewEvaluation {
+        try await generateEvaluation(
+            from: transcript,
+            resumeText: resumeText,
+            customRequirement: nil
+        )
+    }
+
+    public func generateEvaluation(
+        from transcript: [TranscriptLine],
+        resumeText: String?,
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
         let text = AnalysisPrompts.transcriptText(transcript)
         let output = try await run(
             prompt: AnalysisPrompts.evaluation(
                 transcript: text,
                 resume: resumeText.map {
                     String($0.prefix(40_000))
-                }
+                },
+                customRequirement: customRequirement
             ),
             model: evaluationModel,
             timeout: 120

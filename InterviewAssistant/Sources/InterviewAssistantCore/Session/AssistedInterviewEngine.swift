@@ -2,6 +2,7 @@ import Foundation
 
 public final class AssistedInterviewEngine:
     RecordingEngine,
+    InterviewEvaluationRefreshing,
     @unchecked Sendable
 {
     public let events: AsyncStream<AssistantEvent>
@@ -36,5 +37,13 @@ public final class AssistedInterviewEngine:
             throw error
         }
         await pipeline.finish()
+    }
+
+    public func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        try await pipeline.refreshEvaluation(
+            customRequirement: customRequirement
+        )
     }
 }

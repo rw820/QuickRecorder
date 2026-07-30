@@ -25,22 +25,47 @@ public final class SessionController: ObservableObject {
     @Published public private(set) var resumeStatus = "未导入简历"
     @Published public private(set) var isImportingResume = false
     @Published public private(set) var isRefreshingResumeEvaluation = false
+    @Published public private(set) var isRefreshingInterviewEvaluation = false
     @Published public private(set) var evaluationTitle = "本次面试评价"
+
+    public var isRefreshingEvaluation: Bool {
+        isRefreshingResumeEvaluation || isRefreshingInterviewEvaluation
+    }
+
+    public var canRefreshCurrentEvaluation: Bool {
+        guard
+            state == .idle,
+            evaluation != nil,
+            !isRefreshingEvaluation
+        else {
+            return false
+        }
+        if evaluationTitle == "简历初评" {
+            return resume != nil && resumeService != nil
+        }
+        return lastSessionDirectory != nil
+            && interviewEvaluationRefresher != nil
+    }
 
     private let engine: any RecordingEngine
     private let store: SessionDirectoryStore
     private let resumeService: (any ResumeImportServicing)?
+    private let interviewEvaluationRefresher:
+        (any InterviewEvaluationRefreshing)?
     private var eventTask: Task<Void, Never>?
 
     public init(
         engine: any RecordingEngine,
         store: SessionDirectoryStore = SessionDirectoryStore(),
         events: AsyncStream<AssistantEvent>? = nil,
-        resumeService: (any ResumeImportServicing)? = nil
+        resumeService: (any ResumeImportServicing)? = nil,
+        interviewEvaluationRefresher:
+            (any InterviewEvaluationRefreshing)? = nil
     ) {
         self.engine = engine
         self.store = store
         self.resumeService = resumeService
+        self.interviewEvaluationRefresher = interviewEvaluationRefresher
         if let events {
             eventTask = Task { [weak self] in
                 for await event in events {
@@ -57,7 +82,13 @@ public final class SessionController: ObservableObject {
     }
 
     public func start() async {
-        guard state == .idle, !isImportingResume else { return }
+        guard
+            state == .idle,
+            !isImportingResume,
+            !isRefreshingEvaluation
+        else {
+            return
+        }
         transcript = []
         partialTranscripts = [:]
         suggestions = []
@@ -133,7 +164,9 @@ public final class SessionController: ObservableObject {
         }
     }
 
-    public func refreshResumeEvaluation() async {
+    public func refreshResumeEvaluation(
+        customRequirement: String? = nil
+    ) async {
         guard
             state == .idle,
             resume != nil,
@@ -148,12 +181,58 @@ public final class SessionController: ObservableObject {
         defer { isRefreshingResumeEvaluation = false }
 
         do {
-            evaluation = try await resumeService.refreshEvaluation()
+            evaluation = try await resumeService.refreshEvaluation(
+                customRequirement: customRequirement
+            )
             evaluationTitle = "简历初评"
             resumeStatus = "简历初评已刷新"
         } catch {
             warning = "刷新失败：\(error.localizedDescription)"
             resumeStatus = "保留原简历初评"
+        }
+    }
+
+    public func refreshCurrentEvaluation(
+        customRequirement: String? = nil
+    ) async {
+        if evaluationTitle == "简历初评" {
+            await refreshResumeEvaluation(
+                customRequirement: customRequirement
+            )
+        } else {
+            await refreshInterviewEvaluation(
+                customRequirement: customRequirement
+            )
+        }
+    }
+
+    public func refreshInterviewEvaluation(
+        customRequirement: String? = nil
+    ) async {
+        guard
+            state == .idle,
+            evaluationTitle == "本次面试评价",
+            evaluation != nil,
+            lastSessionDirectory != nil,
+            !isRefreshingInterviewEvaluation,
+            let interviewEvaluationRefresher
+        else {
+            return
+        }
+        isRefreshingInterviewEvaluation = true
+        assistantStatus = "正在刷新面试评价"
+        warning = nil
+        defer { isRefreshingInterviewEvaluation = false }
+
+        do {
+            evaluation = try await interviewEvaluationRefresher
+                .refreshEvaluation(
+                    customRequirement: customRequirement
+                )
+            assistantStatus = "本次面试评价已刷新"
+        } catch {
+            warning = "刷新失败：\(error.localizedDescription)"
+            assistantStatus = "保留原面试评价"
         }
     }
 

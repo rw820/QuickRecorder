@@ -11,6 +11,7 @@ private final class FakeAnalysisProvider:
     private var evaluationCallCount = 0
     private var suggestionResume: String?
     private var evaluationResume: String?
+    private var evaluationRequirement: String?
 
     init(shouldFail: Bool = false) {
         self.shouldFail = shouldFail
@@ -58,6 +59,29 @@ private final class FakeAnalysisProvider:
         )
     }
 
+    func generateEvaluation(
+        from transcript: [TranscriptLine],
+        resumeText: String?,
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        try recordEvaluationCall(
+            resumeText: resumeText,
+            customRequirement: customRequirement
+        )
+        return InterviewEvaluation(
+            markdown: """
+            ## 总评
+            已按要求刷新。
+            ## 优势
+            有业务意识。
+            ## 劣势
+            技术细节不足。
+            ## 风险
+            个人贡献待确认。
+            """
+        )
+    }
+
     func counts() -> (suggestions: Int, evaluations: Int) {
         lock.withLock {
             (suggestionCallCount, evaluationCallCount)
@@ -71,6 +95,10 @@ private final class FakeAnalysisProvider:
         lock.withLock { (suggestionResume, evaluationResume) }
     }
 
+    func capturedEvaluationRequirement() -> String? {
+        lock.withLock { evaluationRequirement }
+    }
+
     private func recordSuggestionCall(
         resumeText: String? = nil
     ) throws {
@@ -82,11 +110,13 @@ private final class FakeAnalysisProvider:
     }
 
     private func recordEvaluationCall(
-        resumeText: String? = nil
+        resumeText: String? = nil,
+        customRequirement: String? = nil
     ) throws {
         try lock.withLock {
             evaluationCallCount += 1
             evaluationResume = resumeText
+            evaluationRequirement = customRequirement
             if shouldFail { throw TestFailure(description: "模拟失败") }
         }
     }
@@ -380,6 +410,51 @@ enum InterviewIntelligencePipelineTests {
                     ).path
                 ),
                 "面试场次应复制简历文字"
+            )
+        },
+        TestCase(name: "已结束面试可以按手工要求刷新评价") {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let provider = FakeAnalysisProvider()
+            let pipeline = InterviewIntelligencePipeline(
+                hub: AudioTapHub(),
+                providerFactory: { _ in provider }
+            )
+
+            try await pipeline.start(in: directory)
+            await pipeline.accept(
+                TranscriptLine(
+                    source: .system,
+                    startTime: 1,
+                    endTime: 4,
+                    text: "我负责系统架构设计和项目落地。"
+                )
+            )
+            await pipeline.finish()
+
+            let refreshed = try await pipeline.refreshEvaluation(
+                customRequirement: "重点评价架构能力"
+            )
+            let saved = try String(
+                contentsOf: directory.appendingPathComponent(
+                    "evaluation-report.md"
+                ),
+                encoding: .utf8
+            )
+
+            try expect(
+                refreshed.markdown.contains("已按要求刷新"),
+                "应返回新面试评价"
+            )
+            try expect(
+                provider.capturedEvaluationRequirement()
+                    == "重点评价架构能力",
+                "应把手工要求传给面试分析服务"
+            )
+            try expect(
+                saved.contains("已按要求刷新"),
+                "应覆盖场次评价文件"
             )
         }
     ]

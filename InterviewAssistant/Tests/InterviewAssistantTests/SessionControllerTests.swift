@@ -18,11 +18,34 @@ private actor RecordingEngineSpy: RecordingEngine {
     }
 }
 
+private actor InterviewEvaluationRefresherSpy:
+    InterviewEvaluationRefreshing
+{
+    private let refreshedEvaluation: InterviewEvaluation
+    private var latestRequirement: String?
+
+    init(refreshedEvaluation: InterviewEvaluation) {
+        self.refreshedEvaluation = refreshedEvaluation
+    }
+
+    func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        latestRequirement = customRequirement
+        return refreshedEvaluation
+    }
+
+    func capturedRequirement() -> String? {
+        latestRequirement
+    }
+}
+
 private actor ResumeImportServiceSpy: ResumeImportServicing {
     private let result: ResumeImportResult
     private let refreshedEvaluation: InterviewEvaluation
     private var cleared = false
     private var refreshCount = 0
+    private var latestRefreshRequirement: String?
 
     init(
         result: ResumeImportResult,
@@ -47,6 +70,14 @@ private actor ResumeImportServiceSpy: ResumeImportServicing {
         return refreshedEvaluation
     }
 
+    func refreshEvaluation(
+        customRequirement: String?
+    ) async throws -> InterviewEvaluation {
+        refreshCount += 1
+        latestRefreshRequirement = customRequirement
+        return refreshedEvaluation
+    }
+
     func clear() async throws {
         cleared = true
     }
@@ -57,6 +88,10 @@ private actor ResumeImportServiceSpy: ResumeImportServicing {
 
     func refreshes() -> Int {
         refreshCount
+    }
+
+    func capturedRefreshRequirement() -> String? {
+        latestRefreshRequirement
     }
 }
 
@@ -182,6 +217,10 @@ enum SessionControllerTests {
                 controller.evaluationTitle == "简历初评",
                 "评价标题错误"
             )
+            try expect(
+                controller.canRefreshCurrentEvaluation,
+                "生成简历初评后应允许刷新"
+            )
 
             await controller.clearResume()
             try expect(controller.resume == nil, "应清除当前简历")
@@ -216,7 +255,9 @@ enum SessionControllerTests {
                 from: URL(fileURLWithPath: "/tmp/source.pdf")
             )
 
-            await controller.refreshResumeEvaluation()
+            await controller.refreshResumeEvaluation(
+                customRequirement: "重点核对项目成果"
+            )
 
             try expect(
                 controller.evaluation == newEvaluation,
@@ -228,6 +269,55 @@ enum SessionControllerTests {
             )
             let refreshes = await service.refreshes()
             try expect(refreshes == 1, "应刷新一次")
+            let requirement = await service.capturedRefreshRequirement()
+            try expect(
+                requirement == "重点核对项目成果",
+                "控制器应转发手工刷新要求"
+            )
+        },
+        TestCase(name: "刷新会更新已结束的面试评价") {
+            let pair = AsyncStream.makeStream(of: AssistantEvent.self)
+            let oldEvaluation = InterviewEvaluation(
+                markdown: "## 总评\n旧\n## 优势\n旧\n## 劣势\n旧\n## 风险\n旧"
+            )
+            let newEvaluation = InterviewEvaluation(
+                markdown: "## 总评\n新\n## 优势\n新\n## 劣势\n新\n## 风险\n新"
+            )
+            let refresher = InterviewEvaluationRefresherSpy(
+                refreshedEvaluation: newEvaluation
+            )
+            let controller = SessionController(
+                engine: RecordingEngineSpy(),
+                events: pair.stream,
+                interviewEvaluationRefresher: refresher
+            )
+
+            await controller.start()
+            pair.continuation.yield(.evaluation(oldEvaluation))
+            try? await Task.sleep(for: .milliseconds(20))
+            await controller.stop()
+
+            try expect(
+                controller.canRefreshCurrentEvaluation,
+                "面试结束并生成评价后应允许刷新"
+            )
+            await controller.refreshCurrentEvaluation(
+                customRequirement: "重点评价架构能力"
+            )
+
+            try expect(
+                controller.evaluation == newEvaluation,
+                "刷新后应显示新面试评价"
+            )
+            try expect(
+                !controller.isRefreshingEvaluation,
+                "面试刷新结束后按钮应恢复"
+            )
+            let requirement = await refresher.capturedRequirement()
+            try expect(
+                requirement == "重点评价架构能力",
+                "应转发面试评价手工要求"
+            )
         }
     ]
 }

@@ -136,6 +136,38 @@ enum AnalysisPromptTests {
             try expect(prompt.contains("简历声明"), "缺少简历上下文")
             try expect(prompt.contains("面试逐字稿"), "缺少面试证据")
             try expect(prompt.contains("不一致"), "应检查信息冲突")
+        },
+        TestCase(name: "刷新要求会加入简历和面试评价提示词") {
+            let resumePrompt = AnalysisPrompts.resumeEvaluation(
+                resume: "候选人简历",
+                customRequirement: "重点评价数据能力"
+            )
+            let interviewPrompt = AnalysisPrompts.evaluation(
+                transcript: "候选人回答",
+                customRequirement: "总评控制在八十字"
+            )
+
+            try expect(
+                resumePrompt.contains("本次刷新要求")
+                    && resumePrompt.contains("重点评价数据能力"),
+                "简历评价应包含手工要求"
+            )
+            try expect(
+                interviewPrompt.contains("本次刷新要求")
+                    && interviewPrompt.contains("总评控制在八十字"),
+                "面试评价应包含手工要求"
+            )
+        },
+        TestCase(name: "空白刷新要求不会加入提示词") {
+            let prompt = AnalysisPrompts.evaluation(
+                transcript: "候选人回答",
+                customRequirement: "   \n "
+            )
+
+            try expect(
+                !prompt.contains("本次刷新要求"),
+                "空白要求应按默认规则刷新"
+            )
         }
     ]
 }

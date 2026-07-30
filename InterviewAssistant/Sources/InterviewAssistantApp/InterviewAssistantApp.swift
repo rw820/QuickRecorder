@@ -40,7 +40,8 @@ struct InterviewAssistantApp: App {
             wrappedValue: SessionController(
                 engine: engine,
                 events: engine.events,
-                resumeService: resumeService
+                resumeService: resumeService,
+                interviewEvaluationRefresher: engine
             )
         )
     }
