@@ -2,10 +2,28 @@ import Foundation
 
 public enum CompactInterviewEvaluation {
     private static let listHeadings = ["优势", "劣势", "风险"]
+    private static let scoreHeadings = [
+        "结论", "综合评分", "分项评分", "逻辑分析"
+    ]
 
     public static func normalize(
         _ markdown: String
     ) -> InterviewEvaluation? {
+        let hasScoreSection = scoreHeadings.contains {
+            !section($0, in: markdown).isEmpty
+        }
+        let scorecard: InterviewEvaluationScorecard?
+        if hasScoreSection {
+            guard let parsed = InterviewEvaluationScorecard.parse(
+                from: markdown
+            ) else {
+                return nil
+            }
+            scorecard = parsed
+        } else {
+            scorecard = nil
+        }
+
         let summary = clean(section("总评", in: markdown))
         guard !summary.isEmpty else { return nil }
 
@@ -21,13 +39,16 @@ public enum CompactInterviewEvaluation {
             normalizedSections.append("## \(heading)\n\(body)")
         }
 
-        return InterviewEvaluation(
-            markdown: """
+        let legacyMarkdown = """
             ## 总评
             \(summary)
 
             \(normalizedSections.joined(separator: "\n\n"))
             """
+        return InterviewEvaluation(
+            markdown: scorecard.map {
+                "\($0.canonicalMarkdown)\n\n\(legacyMarkdown)"
+            } ?? legacyMarkdown
         )
     }
 
@@ -56,7 +77,7 @@ public enum CompactInterviewEvaluation {
             .filter { !$0.isEmpty }
     }
 
-    private static func clean(_ text: String) -> String {
+    static func clean(_ text: String) -> String {
         var value = text.replacingOccurrences(
             of: #"\[\d{1,2}:\d{2}(?::\d{2})?\]\s*[-–—~至到]\s*\[\d{1,2}:\d{2}(?::\d{2})?\]"#,
             with: "",

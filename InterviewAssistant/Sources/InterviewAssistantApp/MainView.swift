@@ -309,7 +309,10 @@ struct MainView: View {
     private func evaluationView(
         _ evaluation: InterviewEvaluation
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let scorecard = controller.evaluationTitle == "本次面试评价"
+            ? InterviewEvaluationScorecard.parse(from: evaluation.markdown)
+            : nil
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 sectionHeader(
                     controller.evaluationTitle,
@@ -346,6 +349,17 @@ struct MainView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if let scorecard {
+                        recommendationCard(scorecard)
+                        dimensionScores(scorecard.dimensions)
+                        evaluationSection(
+                            "逻辑分析",
+                            text: scorecard.logicFindings
+                                .map { "- \($0)" }
+                                .joined(separator: "\n"),
+                            color: .indigo
+                        )
+                    }
                     evaluationSection(
                         "总评",
                         text: section("总评", in: evaluation.markdown),
@@ -380,6 +394,109 @@ struct MainView: View {
             }
         }
         .padding(18)
+    }
+
+    private func recommendationCard(
+        _ scorecard: InterviewEvaluationScorecard
+    ) -> some View {
+        let color = recommendationColor(scorecard.recommendation)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Label(
+                    scorecard.recommendation.title,
+                    systemImage: recommendationIcon(
+                        scorecard.recommendation
+                    )
+                )
+                .font(.title3.bold())
+                .foregroundStyle(color)
+
+                Spacer()
+
+                Text("\(scorecard.totalScore)/100")
+                    .font(.title2.bold())
+                    .monospacedDigit()
+                Text("置信度：\(scorecard.confidence.rawValue)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(scorecard.reason)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .padding(16)
+        .background(
+            color.opacity(0.09),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(color.opacity(0.22))
+        }
+    }
+
+    private func dimensionScores(
+        _ dimensions: [InterviewEvaluationDimension]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("分项评分", systemImage: "chart.bar.fill")
+                .font(.headline)
+                .foregroundStyle(.blue)
+
+            ForEach(dimensions, id: \.title) { dimension in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(dimension.title)
+                            .font(.subheadline.bold())
+                        Spacer()
+                        Text("\(dimension.score)/\(dimension.maximum)")
+                            .font(.subheadline.bold())
+                            .monospacedDigit()
+                    }
+                    ProgressView(
+                        value: Double(dimension.score),
+                        total: Double(dimension.maximum)
+                    )
+                    .tint(.blue)
+                    Text(dimension.reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            Color.blue.opacity(0.06),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+    }
+
+    private func recommendationColor(
+        _ recommendation: InterviewRecommendation
+    ) -> Color {
+        switch recommendation {
+        case .recommended:
+            .green
+        case .review:
+            .orange
+        case .notRecommended:
+            .red
+        }
+    }
+
+    private func recommendationIcon(
+        _ recommendation: InterviewRecommendation
+    ) -> String {
+        switch recommendation {
+        case .recommended:
+            "checkmark.circle.fill"
+        case .review:
+            "questionmark.circle.fill"
+        case .notRecommended:
+            "xmark.circle.fill"
+        }
     }
 
     private func evaluationSection(

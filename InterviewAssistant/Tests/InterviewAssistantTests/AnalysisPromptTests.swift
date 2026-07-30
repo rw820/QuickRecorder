@@ -2,12 +2,30 @@ import InterviewAssistantCore
 
 enum AnalysisPromptTests {
     static let all = [
-        TestCase(name: "评价提示词固定四个部分并限制长度") {
+        TestCase(name: "评价提示词要求评分结论和逻辑分析") {
             let prompt = AnalysisPrompts.evaluation(
                 transcript: "[01:05] 候选人：我负责项目。"
             )
-            for heading in ["## 总评", "## 优势", "## 劣势", "## 风险"] {
+            for heading in [
+                "## 结论", "## 综合评分", "## 分项评分", "## 逻辑分析",
+                "## 总评", "## 优势", "## 劣势", "## 风险"
+            ] {
                 try expect(prompt.contains(heading), "缺少 \(heading)")
+            }
+            for score in [
+                "逻辑表达：数字/25", "岗位匹配：数字/20",
+                "专业能力：数字/20", "成果证据：数字/20",
+                "风险一致性：数字/15"
+            ] {
+                try expect(prompt.contains(score), "缺少评分规则 \(score)")
+            }
+            for recommendation in [
+                "建议通过", "保留复核", "不建议通过"
+            ] {
+                try expect(
+                    prompt.contains(recommendation),
+                    "缺少结论 \(recommendation)"
+                )
             }
             try expect(
                 prompt.contains("不得输出任何逐字稿时间戳"),
@@ -23,6 +41,44 @@ enum AnalysisPromptTests {
                 "列表部分必须限制条数和长度"
             )
             try expect(prompt.contains("待确认"), "证据不足必须待确认")
+        },
+        TestCase(name: "评价提示词深入检查回答逻辑并排除识别噪声") {
+            let prompt = AnalysisPrompts.evaluation(
+                transcript: "候选人回答"
+            )
+            for check in [
+                "答非所问", "结构", "因果", "具体", "前后一致",
+                "证据"
+            ] {
+                try expect(
+                    prompt.contains(check),
+                    "缺少逻辑检查：\(check)"
+                )
+            }
+            try expect(
+                prompt.contains("语义重建问题与回答")
+                    && prompt.contains("不要机械相信说话人标签"),
+                "应按语义重建问答关系"
+            )
+            try expect(
+                prompt.contains("ASR")
+                    && prompt.contains("口头语")
+                    && prompt.contains("不得直接扣分"),
+                "识别错误和偶发口头语不应直接扣分"
+            )
+            try expect(
+                prompt.contains("证据不足")
+                    && prompt.contains("最高只能给“保留复核”"),
+                "证据不足时必须限制结论"
+            )
+            for excluded in [
+                "年龄", "性别", "婚育", "籍贯"
+            ] {
+                try expect(
+                    prompt.contains(excluded),
+                    "必须排除岗位无关信息：\(excluded)"
+                )
+            }
         },
         TestCase(name: "建议提示词限制为三条") {
             let prompt = AnalysisPrompts.suggestions(
