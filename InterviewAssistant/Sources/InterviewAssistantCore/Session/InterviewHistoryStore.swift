@@ -25,6 +25,7 @@ public struct InterviewHistoryStore: Sendable {
                     (try? directory.resourceValues(
                         forKeys: [.isDirectoryKey]
                     ).isDirectory) == true,
+                    hasInterviewContent(in: directory),
                     let startedAt = Self.sessionDate(
                         from: directory.lastPathComponent
                     )
@@ -42,6 +43,26 @@ public struct InterviewHistoryStore: Sendable {
                 }
                 return $0.startedAt > $1.startedAt
             }
+    }
+
+    private func hasInterviewContent(in directory: URL) -> Bool {
+        [
+            "transcript.jsonl",
+            "transcript.md",
+            "evaluation-report.md",
+            "system.caf",
+            "microphone.caf"
+        ].contains { name in
+            let url = directory.appendingPathComponent(name)
+            guard
+                let size = try? url.resourceValues(
+                    forKeys: [.fileSizeKey]
+                ).fileSize
+            else {
+                return false
+            }
+            return size > 0
+        }
     }
 
     private func makeRecord(

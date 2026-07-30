@@ -91,6 +91,56 @@ enum InterviewHistoryStoreTests {
             try expect(record.matches("   "), "空搜索应匹配全部记录")
             try expect(!record.matches("不存在的内容"), "无关内容不应匹配")
         },
+        TestCase(name: "历史记录过滤空场次并保持时间倒序") {
+            let root = temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+
+            let transcriptSession = try makeSession(
+                root: root,
+                name: "20260730-100000-transcript",
+                resumeFileName: nil,
+                resumeText: nil,
+                evaluation: nil,
+                transcript: "候选人：介绍项目",
+                audioNames: []
+            )
+            let audioSession = try makeSession(
+                root: root,
+                name: "20260730-110000-audio",
+                resumeFileName: nil,
+                resumeText: nil,
+                evaluation: nil,
+                transcript: nil,
+                audioNames: ["system.caf"]
+            )
+            let emptySession = try makeSession(
+                root: root,
+                name: "20260730-120000-empty",
+                resumeFileName: nil,
+                resumeText: nil,
+                evaluation: nil,
+                transcript: nil,
+                audioNames: []
+            )
+
+            let records = InterviewHistoryStore(root: root).load()
+
+            try expect(records.count == 2, "空场次不应显示")
+            try expect(
+                records.first?.id == audioSession.lastPathComponent,
+                "最新有效场次应排在最前"
+            )
+            try expect(
+                records.last?.id == transcriptSession.lastPathComponent,
+                "较早有效场次应排在后面"
+            )
+            try expect(
+                !records.contains {
+                    $0.id == emptySession.lastPathComponent
+                },
+                "空目录不应成为历史记录"
+            )
+        },
         TestCase(name: "旧场次和损坏元数据不会阻塞历史记录") {
             let root = temporaryRoot()
             defer { try? FileManager.default.removeItem(at: root) }
