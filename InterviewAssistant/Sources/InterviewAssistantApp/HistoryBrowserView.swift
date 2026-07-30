@@ -4,6 +4,7 @@ import SwiftUI
 
 struct HistoryBrowserView: View {
     let store: InterviewHistoryStore
+    let regenerator: any HistoricalEvaluationRegenerating
 
     @Environment(\.dismiss) private var dismiss
     @State private var records: [InterviewHistoryRecord] = []
@@ -12,6 +13,17 @@ struct HistoryBrowserView: View {
     @State private var detailSection = DetailSection.evaluation
     @State private var isLoading = true
     @State private var openError: String?
+    @State private var regenerationError: String?
+    @State private var regeneratingID: InterviewHistoryRecord.ID?
+
+    init(
+        store: InterviewHistoryStore,
+        regenerator: any HistoricalEvaluationRegenerating =
+            HistoricalEvaluationRegenerator()
+    ) {
+        self.store = store
+        self.regenerator = regenerator
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -73,6 +85,21 @@ struct HistoryBrowserView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(openError ?? "请稍后重试")
+        }
+        .alert(
+            "重新生成失败",
+            isPresented: Binding(
+                get: { regenerationError != nil },
+                set: { visible in
+                    if !visible {
+                        regenerationError = nil
+                    }
+                }
+            )
+        ) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(regenerationError ?? "请稍后重试")
         }
     }
 
@@ -140,7 +167,7 @@ struct HistoryBrowserView: View {
 
                 switch detailSection {
                 case .evaluation:
-                    textDetail(record.evaluation)
+                    evaluationDetail(record)
                 case .transcript:
                     textDetail(record.transcript)
                 case .recordings:
@@ -152,6 +179,44 @@ struct HistoryBrowserView: View {
                 "请选择一条记录",
                 systemImage: "doc.text.magnifyingglass"
             )
+        }
+    }
+
+    private func evaluationDetail(
+        _ record: InterviewHistoryRecord
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("使用当前最新版规则分析原逐字稿")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    regenerate(record)
+                } label: {
+                    if regeneratingID == record.id {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("正在重新生成")
+                        }
+                    } else {
+                        Label(
+                            "重新生成评价",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                }
+                .disabled(
+                    regeneratingID != nil
+                        || !hasStructuredTranscript(record)
+                )
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+
+            Divider()
+            textDetail(record.evaluation)
         }
     }
 
@@ -224,6 +289,41 @@ struct HistoryBrowserView: View {
     private var selectedRecord: InterviewHistoryRecord? {
         guard let selectedID else { return filteredRecords.first }
         return filteredRecords.first { $0.id == selectedID }
+    }
+
+    private func hasStructuredTranscript(
+        _ record: InterviewHistoryRecord
+    ) -> Bool {
+        FileManager.default.fileExists(
+            atPath: record.directory
+                .appendingPathComponent("transcript.jsonl")
+                .path
+        )
+    }
+
+    private func regenerate(
+        _ record: InterviewHistoryRecord
+    ) {
+        guard regeneratingID == nil else { return }
+        regeneratingID = record.id
+        regenerationError = nil
+
+        Task {
+            defer { regeneratingID = nil }
+            do {
+                _ = try await regenerator.regenerate(
+                    in: record.directory,
+                    customRequirement: nil
+                )
+                let refreshed = await Task.detached {
+                    store.load()
+                }.value
+                records = refreshed
+                selectedID = record.id
+            } catch {
+                regenerationError = error.localizedDescription
+            }
+        }
     }
 
     private func open(_ url: URL, message: String) {
