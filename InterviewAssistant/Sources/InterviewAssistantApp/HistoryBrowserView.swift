@@ -1,10 +1,12 @@
 import AppKit
 import InterviewAssistantCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct HistoryBrowserView: View {
     let store: InterviewHistoryStore
     let regenerator: any HistoricalEvaluationRegenerating
+    let resumeAttacher: any HistoricalResumeAttaching
 
     @Environment(\.dismiss) private var dismiss
     @State private var records: [InterviewHistoryRecord] = []
@@ -15,14 +17,20 @@ struct HistoryBrowserView: View {
     @State private var openError: String?
     @State private var regenerationError: String?
     @State private var regeneratingID: InterviewHistoryRecord.ID?
+    @State private var attachingResumeID: InterviewHistoryRecord.ID?
+    @State private var resumeTargetID: InterviewHistoryRecord.ID?
+    @State private var showsResumeImporter = false
 
     init(
         store: InterviewHistoryStore,
         regenerator: any HistoricalEvaluationRegenerating =
-            HistoricalEvaluationRegenerator()
+            HistoricalEvaluationRegenerator(),
+        resumeAttacher: any HistoricalResumeAttaching =
+            HistoricalResumeAttachmentService()
     ) {
         self.store = store
         self.regenerator = regenerator
+        self.resumeAttacher = resumeAttacher
     }
 
     var body: some View {
@@ -71,6 +79,23 @@ struct HistoryBrowserView: View {
                 return
             }
         }
+        .fileImporter(
+            isPresented: $showsResumeImporter,
+            allowedContentTypes: supportedResumeTypes,
+            allowsMultipleSelection: false
+        ) { result in
+            guard
+                case let .success(urls) = result,
+                let url = urls.first,
+                let targetID = resumeTargetID,
+                let record = records.first(where: { $0.id == targetID })
+            else {
+                resumeTargetID = nil
+                return
+            }
+            resumeTargetID = nil
+            attachResume(url, to: record)
+        }
         .alert(
             "无法打开",
             isPresented: Binding(
@@ -87,7 +112,7 @@ struct HistoryBrowserView: View {
             Text(openError ?? "请稍后重试")
         }
         .alert(
-            "重新生成失败",
+            "操作失败",
             isPresented: Binding(
                 get: { regenerationError != nil },
                 set: { visible in
@@ -192,6 +217,29 @@ struct HistoryBrowserView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
+                    resumeTargetID = record.id
+                    showsResumeImporter = true
+                } label: {
+                    if attachingResumeID == record.id {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("正在添加并生成")
+                        }
+                    } else {
+                        Label(
+                            record.resumeText == nil
+                                ? "添加简历"
+                                : "替换简历",
+                            systemImage: "doc.badge.plus"
+                        )
+                    }
+                }
+                .disabled(
+                    attachingResumeID != nil
+                        || regeneratingID != nil
+                )
+                Button {
                     regenerate(record)
                 } label: {
                     if regeneratingID == record.id {
@@ -208,7 +256,8 @@ struct HistoryBrowserView: View {
                     }
                 }
                 .disabled(
-                    regeneratingID != nil
+                    attachingResumeID != nil
+                        || regeneratingID != nil
                         || !hasStructuredTranscript(record)
                 )
             }
@@ -324,6 +373,70 @@ struct HistoryBrowserView: View {
                 regenerationError = error.localizedDescription
             }
         }
+    }
+
+    private func attachResume(
+        _ url: URL,
+        to record: InterviewHistoryRecord
+    ) {
+        guard
+            attachingResumeID == nil,
+            regeneratingID == nil
+        else {
+            return
+        }
+        attachingResumeID = record.id
+        regenerationError = nil
+
+        Task {
+            defer { attachingResumeID = nil }
+            do {
+                _ = try await resumeAttacher.attachResume(
+                    from: url,
+                    to: record.directory
+                )
+            } catch {
+                regenerationError =
+                    "添加简历失败：" + error.localizedDescription
+                return
+            }
+
+            do {
+                _ = try await regenerator.regenerate(
+                    in: record.directory,
+                    customRequirement: nil
+                )
+                await reloadRecords(selecting: record.id)
+            } catch {
+                await reloadRecords(selecting: record.id)
+                regenerationError =
+                    "简历已添加，评价生成失败："
+                    + error.localizedDescription
+            }
+        }
+    }
+
+    private func reloadRecords(
+        selecting id: InterviewHistoryRecord.ID
+    ) async {
+        let refreshed = await Task.detached {
+            store.load()
+        }.value
+        records = refreshed
+        selectedID = id
+    }
+
+    private var supportedResumeTypes: [UTType] {
+        let standard: [UTType] = [
+            .pdf,
+            .plainText,
+            .png,
+            .jpeg
+        ]
+        let word = ["doc", "docx"].compactMap {
+            UTType(filenameExtension: $0)
+        }
+        return standard + word
     }
 
     private func open(_ url: URL, message: String) {

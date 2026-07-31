@@ -189,6 +189,41 @@ enum InterviewHistoryStoreTests {
                 "元数据损坏时仍应读取评价"
             )
         },
+        TestCase(name: "历史记录优先显示后来添加的简历") {
+            let root = temporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let directory = try makeSession(
+                root: root,
+                name: "20260730-150000-attached",
+                resumeFileName: "旧简历.pdf",
+                resumeText: "旧简历内容",
+                evaluation: "原评价",
+                transcript: "候选人：项目介绍",
+                audioNames: []
+            )
+            let source = root.appendingPathComponent("新简历.docx")
+            try Data("新源文件".utf8).write(to: source)
+            _ = try CurrentResumeStore(
+                root: directory.appendingPathComponent(
+                    "AttachedResume",
+                    isDirectory: true
+                )
+            ).save(
+                sourceURL: source,
+                text: "新简历内容"
+            )
+
+            let record = InterviewHistoryStore(root: root).load().first
+
+            try expect(
+                record?.displayName == "新简历.docx",
+                "应显示新添加的简历名称"
+            )
+            try expect(
+                record?.resumeText == "新简历内容",
+                "应读取新添加的简历内容"
+            )
+        },
     ]
 
     private static func temporaryRoot() -> URL {

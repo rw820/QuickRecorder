@@ -27,6 +27,7 @@ enum TestMain {
             + SessionDirectoryStoreTests.all
             + InterviewHistoryStoreTests.all
             + HistoricalEvaluationRegeneratorTests.all
+            + HistoricalResumeAttachmentServiceTests.all
             + SessionControllerTests.all
             + AudioRingBufferTests.all
             + AudioTapHubTests.all

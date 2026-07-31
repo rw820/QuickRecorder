@@ -43,10 +43,7 @@ public struct HistoricalEvaluationRegenerator:
         customRequirement: String?
     ) async throws -> InterviewEvaluation {
         let transcript = try loadTranscript(in: directory)
-        let resumeText = readOptionalText(
-            named: "resume.txt",
-            in: directory
-        )
+        let resumeText = readResumeText(in: directory)
         let provider = try providerFactory(directory)
         let evaluation = try await provider.generateEvaluation(
             from: transcript,
@@ -108,5 +105,24 @@ public struct HistoricalEvaluationRegenerator:
             return nil
         }
         return text
+    }
+
+    private func readResumeText(in directory: URL) -> String? {
+        let roots = [
+            directory.appendingPathComponent(
+                "AttachedResume",
+                isDirectory: true
+            ),
+            directory
+        ]
+        for root in roots {
+            if let text = readOptionalText(
+                named: "resume.txt",
+                in: root
+            ) {
+                return text
+            }
+        }
+        return nil
     }
 }

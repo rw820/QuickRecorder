@@ -81,7 +81,7 @@ public struct InterviewHistoryStore: Sendable {
             startedAt: startedAt,
             displayName: displayName,
             resumeFileName: resumeFileName,
-            resumeText: readText(named: "resume.txt", in: directory),
+            resumeText: readResumeText(in: directory),
             evaluation: readText(
                 named: "evaluation-report.md",
                 in: directory
@@ -99,11 +99,40 @@ public struct InterviewHistoryStore: Sendable {
     }
 
     private func readMetadata(in directory: URL) -> ResumeDocument? {
-        let url = directory.appendingPathComponent(
-            "resume-metadata.json"
-        )
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(ResumeDocument.self, from: data)
+        for root in resumeRoots(in: directory) {
+            let url = root.appendingPathComponent(
+                "resume-metadata.json"
+            )
+            guard let data = try? Data(contentsOf: url) else {
+                continue
+            }
+            if let document = try? JSONDecoder().decode(
+                ResumeDocument.self,
+                from: data
+            ) {
+                return document
+            }
+        }
+        return nil
+    }
+
+    private func readResumeText(in directory: URL) -> String? {
+        for root in resumeRoots(in: directory) {
+            if let text = readText(named: "resume.txt", in: root) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private func resumeRoots(in directory: URL) -> [URL] {
+        [
+            directory.appendingPathComponent(
+                "AttachedResume",
+                isDirectory: true
+            ),
+            directory
+        ]
     }
 
     private func readText(named name: String, in directory: URL) -> String? {

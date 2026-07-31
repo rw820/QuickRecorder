@@ -185,6 +185,44 @@ enum HistoricalEvaluationRegeneratorTests {
                 encoding: .utf8
             )
             try expect(saved == "旧评价", "失败时不应覆盖旧评价")
+        },
+        TestCase(name: "重新评价优先使用后来添加的简历") {
+            let directory = temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try writeTranscript(in: directory)
+            try "旧简历".write(
+                to: directory.appendingPathComponent("resume.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+            let source = directory.appendingPathComponent("candidate.pdf")
+            try Data("源文件".utf8).write(to: source)
+            _ = try CurrentResumeStore(
+                root: directory.appendingPathComponent(
+                    "AttachedResume",
+                    isDirectory: true
+                )
+            ).save(
+                sourceURL: source,
+                text: "后来添加的简历"
+            )
+            let provider = HistoricalProviderStub(
+                result: InterviewEvaluation(markdown: "新评价")
+            )
+            let regenerator = HistoricalEvaluationRegenerator(
+                providerFactory: { _ in provider }
+            )
+
+            _ = try await regenerator.regenerate(
+                in: directory,
+                customRequirement: nil
+            )
+
+            let captured = await provider.snapshot()
+            try expect(
+                captured.resumeText == "后来添加的简历",
+                "重新评价应使用新添加的简历"
+            )
         }
     ]
 
