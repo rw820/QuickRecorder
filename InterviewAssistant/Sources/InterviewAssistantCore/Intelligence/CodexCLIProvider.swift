@@ -29,10 +29,12 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
     public let evaluationModel: String
 
     private let executableURL: URL
+    private let rulesStore: EvaluationRulesStore
 
     public init(
         sessionDirectory: URL,
         executableURL: URL? = nil,
+        rulesStore: EvaluationRulesStore = EvaluationRulesStore(),
         suggestionModel: String = "gpt-5.6-luna",
         evaluationModel: String = "gpt-5.6-sol"
     ) throws {
@@ -42,6 +44,7 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
         }
         self.sessionDirectory = sessionDirectory
         self.executableURL = executableURL
+        self.rulesStore = rulesStore
         self.suggestionModel = suggestionModel
         self.evaluationModel = evaluationModel
     }
@@ -59,21 +62,29 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
         from resumeText: String,
         customRequirement: String?
     ) async throws -> InterviewEvaluation {
+        let configuration = rulesStore.load()
         let output = try await run(
             prompt: AnalysisPrompts.resumeEvaluation(
                 resume: String(resumeText.prefix(40_000)),
-                customRequirement: customRequirement
+                customRequirement: customRequirement,
+                rules: configuration.resume
             ),
             model: evaluationModel,
             timeout: 120
         )
-        guard let evaluation = CompactResumeEvaluation.normalize(output)
+        guard let normalized = CompactResumeEvaluation.normalize(
+            output,
+            rules: configuration.resume
+        )
         else {
             throw CodexCLIProviderError.invalidOutput(
-                "简历初评缺少五个部分或五个建议问题"
+                "简历初评不符合当前评价规则"
             )
         }
-        return evaluation
+        return InterviewEvaluation(
+            markdown: normalized.markdown,
+            rulesConfiguration: configuration
+        )
     }
 
     public func generateSuggestions(
@@ -122,6 +133,7 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
         resumeText: String?,
         customRequirement: String?
     ) async throws -> InterviewEvaluation {
+        let configuration = rulesStore.load()
         let text = AnalysisPrompts.transcriptText(transcript)
         let output = try await run(
             prompt: AnalysisPrompts.evaluation(
@@ -129,18 +141,30 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
                 resume: resumeText.map {
                     String($0.prefix(40_000))
                 },
-                customRequirement: customRequirement
+                customRequirement: customRequirement,
+                rules: configuration.interview
             ),
             model: evaluationModel,
             timeout: 120
         )
-        return try Self.validatedEvaluation(output)
+        let normalized = try Self.validatedEvaluation(
+            output,
+            rules: configuration.interview
+        )
+        return InterviewEvaluation(
+            markdown: normalized.markdown,
+            rulesConfiguration: configuration
+        )
     }
 
     private static func validatedEvaluation(
-        _ output: String
+        _ output: String,
+        rules: InterviewEvaluationRules
     ) throws -> InterviewEvaluation {
-        guard let evaluation = CompactInterviewEvaluation.normalize(output)
+        guard let evaluation = CompactInterviewEvaluation.normalize(
+            output,
+            rules: rules
+        )
         else {
             throw CodexCLIProviderError.invalidOutput("缺少评价章节")
         }

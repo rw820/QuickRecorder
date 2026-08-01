@@ -9,13 +9,43 @@ public enum CompactInterviewEvaluation {
     public static func normalize(
         _ markdown: String
     ) -> InterviewEvaluation? {
-        let hasScoreSection = scoreHeadings.contains {
+        normalize(markdown, rules: legacyCompatibleRules)
+    }
+
+    static var legacyCompatibleRules: InterviewEvaluationRules {
+        var rules = InterviewEvaluationRules.default
+        rules.dimensions = rules.dimensions.map { dimension in
+            var changed = dimension
+            changed.reasonMinimumCharacters = 1
+            return changed
+        }
+        rules.sections = rules.sections.map { section in
+            var changed = section
+            changed.minimumCharacters = 1
+            return changed
+        }
+        return rules
+    }
+
+    public static func normalize(
+        _ markdown: String,
+        rules: InterviewEvaluationRules
+    ) -> InterviewEvaluation? {
+        let configuredScoreHeadings = rules.sections.filter {
+            [.conclusion, .totalScore, .dimensionScores, .logicAnalysis]
+                .contains($0.kind)
+        }.map(\.title)
+        let headings = configuredScoreHeadings.isEmpty
+            ? scoreHeadings
+            : configuredScoreHeadings
+        let hasScoreSection = headings.contains {
             !section($0, in: markdown).isEmpty
         }
         let scorecard: InterviewEvaluationScorecard?
         if hasScoreSection {
             guard let parsed = InterviewEvaluationScorecard.parse(
-                from: markdown
+                from: markdown,
+                rules: rules
             ) else {
                 return nil
             }
@@ -24,31 +54,59 @@ public enum CompactInterviewEvaluation {
             scorecard = nil
         }
 
-        let summary = clean(section("总评", in: markdown))
-        guard !summary.isEmpty else { return nil }
-
-        var normalizedSections: [String] = []
-        for heading in listHeadings {
-            let values = items(in: section(heading, in: markdown))
+        var normalizedBodies: [String: String] = [:]
+        let contentSections = rules.sections.filter {
+            ![.conclusion, .totalScore, .dimensionScores, .logicAnalysis]
+                .contains($0.kind)
+        }
+        for configured in contentSections {
+            let raw = section(configured.title, in: markdown)
+            if configured.maximumItems == 1 {
+                let cleaned = clean(raw)
+                if cleaned.isEmpty {
+                    guard !configured.isRequired else { return nil }
+                    continue
+                }
+                guard cleaned.count >= configured.minimumCharacters else {
+                    return nil
+                }
+                let value = limited(
+                    cleaned,
+                    to: configured.maximumCharacters
+                )
+                normalizedBodies[configured.id] = value
+                continue
+            }
+            let values = items(in: raw)
                 .map(clean)
                 .filter { !$0.isEmpty }
-            guard !values.isEmpty else { return nil }
-            let body = values.prefix(3)
-                .map { "- \($0)" }
+            if values.isEmpty {
+                guard !configured.isRequired else { return nil }
+                continue
+            }
+            let retained = Array(values.prefix(configured.maximumItems))
+            guard retained.allSatisfy({
+                $0.count >= configured.minimumCharacters
+            }) else {
+                return nil
+            }
+            let body = retained
+                .map {
+                    "- \(limited($0, to: configured.maximumCharacters))"
+                }
                 .joined(separator: "\n")
-            normalizedSections.append("## \(heading)\n\(body)")
+            normalizedBodies[configured.id] = body
         }
-
-        let legacyMarkdown = """
-            ## 总评
-            \(summary)
-
-            \(normalizedSections.joined(separator: "\n\n"))
-            """
+        guard !normalizedBodies.isEmpty else { return nil }
+        let normalizedSections: [String] = rules.sections.compactMap {
+            configured -> String? in
+            let body = scorecard?.canonicalBody(for: configured.kind)
+                ?? normalizedBodies[configured.id]
+            guard let body, !body.isEmpty else { return nil }
+            return "## \(configured.title)\n\(body)"
+        }
         return InterviewEvaluation(
-            markdown: scorecard.map {
-                "\($0.canonicalMarkdown)\n\n\(legacyMarkdown)"
-            } ?? legacyMarkdown
+            markdown: normalizedSections.joined(separator: "\n\n")
         )
     }
 
@@ -113,6 +171,11 @@ public enum CompactInterviewEvaluation {
             options: .regularExpression
         )
         .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func limited(_ text: String, to limit: Int) -> String {
+        guard text.count > limit, limit > 1 else { return text }
+        return String(text.prefix(limit - 1)) + "…"
     }
 
     private static func cleanListPrefix(_ text: String) -> String {

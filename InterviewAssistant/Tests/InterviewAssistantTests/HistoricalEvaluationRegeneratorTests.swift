@@ -98,7 +98,14 @@ enum HistoricalEvaluationRegeneratorTests {
                 customRequirement: "重点检查回答逻辑"
             )
 
-            try expect(result == expected, "应返回新评价")
+            try expect(
+                result.markdown == expected.markdown,
+                "应返回新评价"
+            )
+            try expect(
+                result.rulesConfiguration != nil,
+                "返回结果应带实际使用的规则"
+            )
             let captured = await provider.snapshot()
             try expect(
                 captured.transcriptCount == 2,
@@ -223,6 +230,41 @@ enum HistoricalEvaluationRegeneratorTests {
                 captured.resumeText == "后来添加的简历",
                 "重新评价应使用新添加的简历"
             )
+        },
+        TestCase(name: "历史评价成功后保存当前规则快照") {
+            let directory = temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try writeTranscript(in: directory)
+            let rulesRoot = directory.appendingPathComponent(
+                "RuleStore",
+                isDirectory: true
+            )
+            let rulesStore = EvaluationRulesStore(root: rulesRoot)
+            var rules = EvaluationRulesConfiguration.default
+            rules.interview.dimensions[0].instruction = "重点检查结论"
+            try rulesStore.save(rules)
+            let provider = HistoricalProviderStub(
+                result: InterviewEvaluation(markdown: "新评价")
+            )
+            let regenerator = HistoricalEvaluationRegenerator(
+                rulesStore: rulesStore,
+                providerFactory: { _ in provider }
+            )
+
+            _ = try await regenerator.regenerate(
+                in: directory,
+                customRequirement: nil
+            )
+
+            let snapshot = try JSONDecoder().decode(
+                EvaluationRulesConfiguration.self,
+                from: Data(
+                    contentsOf: directory.appendingPathComponent(
+                        "evaluation-rules.json"
+                    )
+                )
+            )
+            try expect(snapshot == rules, "应保存当前评价规则快照")
         }
     ]
 

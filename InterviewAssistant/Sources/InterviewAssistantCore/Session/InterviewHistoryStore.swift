@@ -46,7 +46,15 @@ public struct InterviewHistoryStore: Sendable {
     }
 
     private func hasInterviewContent(in directory: URL) -> Bool {
-        [
+        if let _ = try? EvaluationArtifactStore(
+            directory: directory
+        ).load(
+            reportName: "evaluation-report.md",
+            snapshotName: "evaluation-rules.json"
+        ) {
+            return true
+        }
+        return [
             "transcript.jsonl",
             "transcript.md",
             "evaluation-report.md",
@@ -82,10 +90,12 @@ public struct InterviewHistoryStore: Sendable {
             displayName: displayName,
             resumeFileName: resumeFileName,
             resumeText: readResumeText(in: directory),
-            evaluation: readText(
-                named: "evaluation-report.md",
-                in: directory
-            ),
+            evaluation: (try? EvaluationArtifactStore(
+                directory: directory
+            ).load(
+                reportName: "evaluation-report.md",
+                snapshotName: "evaluation-rules.json"
+            ))?.markdown,
             transcript: readText(named: "transcript.md", in: directory),
             systemAudioURL: existingFile(
                 named: "system.caf",

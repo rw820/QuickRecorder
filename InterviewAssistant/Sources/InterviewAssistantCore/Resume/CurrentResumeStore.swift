@@ -120,24 +120,17 @@ public struct CurrentResumeStore: Sendable {
     public func saveEvaluation(
         _ evaluation: InterviewEvaluation
     ) throws {
-        try FileManager.default.createDirectory(
-            at: root,
-            withIntermediateDirectories: true
-        )
-        try evaluation.markdown.write(
-            to: root.appendingPathComponent("resume-evaluation.md"),
-            atomically: true,
-            encoding: .utf8
+        try EvaluationArtifactStore(directory: root).save(
+            evaluation,
+            reportName: "resume-evaluation.md",
+            snapshotName: "resume-evaluation-rules.json"
         )
     }
 
     public func loadEvaluation() throws -> InterviewEvaluation? {
-        let url = root.appendingPathComponent("resume-evaluation.md")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        return InterviewEvaluation(
-            markdown: try String(contentsOf: url, encoding: .utf8)
+        try EvaluationArtifactStore(directory: root).load(
+            reportName: "resume-evaluation.md",
+            snapshotName: "resume-evaluation-rules.json"
         )
     }
 
@@ -151,6 +144,8 @@ public struct CurrentResumeStore: Sendable {
         for name in [
             "resume.txt",
             "resume-evaluation.md",
+            "resume-evaluation-rules.json",
+            "resume-evaluation.artifact.json",
             "resume-metadata.json",
         ] {
             let source = root.appendingPathComponent(name)

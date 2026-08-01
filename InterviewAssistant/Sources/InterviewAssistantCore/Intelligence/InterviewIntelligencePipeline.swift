@@ -275,12 +275,10 @@ public actor InterviewIntelligencePipeline {
     private func save(_ evaluation: InterviewEvaluation) {
         guard let directory else { return }
         do {
-            try evaluation.markdown.write(
-                to: directory.appendingPathComponent(
-                    "evaluation-report.md"
-                ),
-                atomically: true,
-                encoding: .utf8
+            try EvaluationArtifactStore(directory: directory).save(
+                evaluation,
+                reportName: "evaluation-report.md",
+                snapshotName: "evaluation-rules.json"
             )
         } catch {
             warn("评价文件保存失败：\(error.localizedDescription)")

@@ -61,12 +61,36 @@ public struct InterviewEvaluationScorecard: Equatable, Sendable {
     public static func parse(
         from markdown: String
     ) -> InterviewEvaluationScorecard? {
-        let conclusion = CompactInterviewEvaluation.items(
-            in: CompactInterviewEvaluation.section(
-                "结论",
-                in: markdown
-            )
+        parse(
+            from: markdown,
+            rules: CompactInterviewEvaluation.legacyCompatibleRules
         )
+    }
+
+    public static func parse(
+        from markdown: String,
+        rules: InterviewEvaluationRules
+    ) -> InterviewEvaluationScorecard? {
+        let conclusionTitle = title(
+            for: .conclusion,
+            in: rules,
+            fallback: "结论"
+        )
+        let conclusionText = CompactInterviewEvaluation.section(
+            conclusionTitle,
+            in: markdown
+        )
+        guard let conclusionRule = rules.sections.first(
+            where: { $0.kind == .conclusion }
+        ), Self.isValidLength(conclusionText, rule: conclusionRule) else {
+            return nil
+        }
+        let conclusion = CompactInterviewEvaluation.items(
+            in: conclusionText
+        )
+        guard conclusion.count == conclusionRule.maximumItems else {
+            return nil
+        }
         guard
             let modelRecommendation = conclusion.first
                 .flatMap(InterviewRecommendation.parse),
@@ -79,50 +103,73 @@ public struct InterviewEvaluationScorecard: Equatable, Sendable {
             ),
             let reason = value(after: "理由", in: conclusion),
             !reason.isEmpty,
-            parseDisplayedTotal(markdown) != nil
+            parseDisplayedTotal(markdown, rules: rules) != nil
         else {
             return nil
         }
 
+        let dimensionTitle = title(
+            for: .dimensionScores,
+            in: rules,
+            fallback: "分项评分"
+        )
         let dimensions = CompactInterviewEvaluation.items(
             in: CompactInterviewEvaluation.section(
-                "分项评分",
+                dimensionTitle,
                 in: markdown
             )
         ).compactMap(parseDimension)
-        let expected: [(String, Int)] = [
-            ("逻辑表达", 25),
-            ("岗位匹配", 20),
-            ("专业能力", 20),
-            ("成果证据", 20),
-            ("风险一致性", 15)
-        ]
-        guard dimensions.count == expected.count else { return nil }
-        for (dimension, required) in zip(dimensions, expected) {
+        guard let dimensionRule = rules.sections.first(
+            where: { $0.kind == .dimensionScores }
+        ), dimensionRule.maximumItems == rules.dimensions.count else {
+            return nil
+        }
+        guard dimensions.count == rules.dimensions.count else { return nil }
+        for (dimension, required) in zip(dimensions, rules.dimensions) {
             guard
-                dimension.title == required.0,
-                dimension.maximum == required.1,
+                dimension.title == required.title,
+                dimension.maximum == required.maximum,
                 (0...dimension.maximum).contains(dimension.score),
-                !dimension.reason.isEmpty
+                dimension.reason.count
+                    >= required.reasonMinimumCharacters,
+                dimension.reason.count
+                    <= required.reasonMaximumCharacters
             else {
                 return nil
             }
         }
 
-        let logicFindings = CompactInterviewEvaluation.items(
+        let logicTitle = title(
+            for: .logicAnalysis,
+            in: rules,
+            fallback: "逻辑分析"
+        )
+        guard let logicRule = rules.sections.first(
+            where: { $0.kind == .logicAnalysis }
+        ) else { return nil }
+        let allLogicFindings = CompactInterviewEvaluation.items(
             in: CompactInterviewEvaluation.section(
-                "逻辑分析",
+                logicTitle,
                 in: markdown
             )
         )
         .map(CompactInterviewEvaluation.clean)
         .filter { !$0.isEmpty }
-        guard !logicFindings.isEmpty else { return nil }
+        let logicFindings = Array(
+            allLogicFindings.prefix(logicRule.maximumItems)
+        )
+        guard
+            !logicFindings.isEmpty,
+            logicFindings.allSatisfy({ item in
+                item.count >= logicRule.minimumCharacters
+                    && item.count <= logicRule.maximumCharacters
+            })
+        else { return nil }
 
         let total = dimensions.reduce(0) { $0 + $1.score }
         let thresholdRecommendation: InterviewRecommendation =
-            total >= 75 ? .recommended
-            : total >= 60 ? .review
+            total >= rules.thresholds.recommendedMinimum ? .recommended
+            : total >= rules.thresholds.reviewMinimum ? .review
             : .notRecommended
 
         return InterviewEvaluationScorecard(
@@ -134,31 +181,45 @@ public struct InterviewEvaluationScorecard: Equatable, Sendable {
             reason: CompactInterviewEvaluation.clean(reason),
             totalScore: total,
             dimensions: dimensions,
-            logicFindings: Array(logicFindings.prefix(3))
+            logicFindings: logicFindings
         )
     }
 
     var canonicalMarkdown: String {
-        let dimensionText = dimensions.map {
-            "- \($0.title)：\($0.score)/\($0.maximum)｜\($0.reason)"
-        }.joined(separator: "\n")
-        let logicText = logicFindings.map { "- \($0)" }
-            .joined(separator: "\n")
-        return """
-        ## 结论
-        \(recommendation.title)
-        置信度：\(confidence.rawValue)
-        理由：\(reason)
+        canonicalMarkdown(rules: .default)
+    }
 
-        ## 综合评分
-        \(totalScore)/100
+    func canonicalMarkdown(
+        rules: InterviewEvaluationRules
+    ) -> String {
+        rules.sections.compactMap { section in
+            canonicalBody(for: section.kind).map {
+                "## \(section.title)\n\($0)"
+            }
+        }.joined(separator: "\n\n")
+    }
 
-        ## 分项评分
-        \(dimensionText)
-
-        ## 逻辑分析
-        \(logicText)
-        """
+    func canonicalBody(
+        for kind: EvaluationSectionKind
+    ) -> String? {
+        switch kind {
+        case .conclusion:
+            """
+            \(recommendation.title)
+            置信度：\(confidence.rawValue)
+            理由：\(reason)
+            """
+        case .totalScore:
+            "\(totalScore)/100"
+        case .dimensionScores:
+            dimensions.map {
+                "- \($0.title)：\($0.score)/\($0.maximum)｜\($0.reason)"
+            }.joined(separator: "\n")
+        case .logicAnalysis:
+            logicFindings.map { "- \($0)" }.joined(separator: "\n")
+        default:
+            nil
+        }
     }
 
     private static func value(
@@ -183,13 +244,37 @@ public struct InterviewEvaluationScorecard: Equatable, Sendable {
         return nil
     }
 
+    private static func isValidLength(
+        _ value: String,
+        rule: EvaluationSectionRule
+    ) -> Bool {
+        (rule.minimumCharacters...rule.maximumCharacters)
+            .contains(value.count)
+    }
+
     private static func parseDisplayedTotal(
-        _ markdown: String
+        _ markdown: String,
+        rules: InterviewEvaluationRules
     ) -> Int? {
+        let totalTitle = title(
+            for: .totalScore,
+            in: rules,
+            fallback: "综合评分"
+        )
         let value = CompactInterviewEvaluation.section(
-            "综合评分",
+            totalTitle,
             in: markdown
         )
+        guard
+            let rule = rules.sections.first(
+                where: { $0.kind == .totalScore }
+            ),
+            rule.maximumItems == 1,
+            value.count >= rule.minimumCharacters,
+            value.count <= rule.maximumCharacters
+        else {
+            return nil
+        }
         guard let match = firstMatch(
             pattern: #"^\s*(\d+)\s*/\s*100\s*$"#,
             in: value
@@ -197,6 +282,14 @@ public struct InterviewEvaluationScorecard: Equatable, Sendable {
             return nil
         }
         return score
+    }
+
+    private static func title(
+        for kind: EvaluationSectionKind,
+        in rules: InterviewEvaluationRules,
+        fallback: String
+    ) -> String {
+        rules.sections.first { $0.kind == kind }?.title ?? fallback
     }
 
     private static func parseDimension(

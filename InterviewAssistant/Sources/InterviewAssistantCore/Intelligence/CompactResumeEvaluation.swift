@@ -8,28 +8,65 @@ public enum CompactResumeEvaluation {
     public static func normalize(
         _ markdown: String
     ) -> InterviewEvaluation? {
-        var sections: [String: String] = [:]
-        for heading in evaluationHeadings {
-            let value = compact(section(heading, in: markdown), limit: 100)
-            guard !value.isEmpty else { return nil }
-            sections[heading] = value
+        var rules = ResumeEvaluationRules.default
+        rules.sections = rules.sections.map { section in
+            var changed = section
+            changed.minimumCharacters = 1
+            return changed
         }
+        return normalize(markdown, rules: rules)
+    }
 
-        let suggestedQuestions = questions(in: markdown)
-        guard suggestedQuestions.count >= 5 else { return nil }
-        let questionText = suggestedQuestions.prefix(5)
-            .enumerated()
-            .map { "\($0.offset + 1). \($0.element)" }
-            .joined(separator: "\n")
-
-        let output = evaluationHeadings.map {
-            "## \($0)\n\(sections[$0] ?? "")"
+    public static func normalize(
+        _ markdown: String,
+        rules: ResumeEvaluationRules
+    ) -> InterviewEvaluation? {
+        var output: [String] = []
+        for configured in rules.sections {
+            if configured.kind == .questions {
+                guard configured.maximumItems == rules.questionCount else {
+                    return nil
+                }
+                let suggested = questions(
+                    in: markdown,
+                    heading: configured.title
+                )
+                guard suggested.count >= rules.questionCount else {
+                    return nil
+                }
+                let retained = Array(suggested.prefix(rules.questionCount))
+                guard retained.allSatisfy({
+                    $0.count >= configured.minimumCharacters
+                }) else {
+                    return nil
+                }
+                let text = retained
+                    .enumerated()
+                    .map {
+                        "\($0.offset + 1). \(limited($0.element, to: configured.maximumCharacters))"
+                    }
+                    .joined(separator: "\n")
+                output.append("## \(configured.title)\n\(text)")
+                continue
+            }
+            let cleaned = compact(
+                section(configured.title, in: markdown)
+            )
+            if cleaned.isEmpty {
+                guard !configured.isRequired else { return nil }
+                continue
+            }
+            guard cleaned.count >= configured.minimumCharacters else {
+                return nil
+            }
+            let value = limited(
+                cleaned,
+                to: configured.maximumCharacters
+            )
+            output.append("## \(configured.title)\n\(value)")
         }
-        .joined(separator: "\n\n")
-
-        return InterviewEvaluation(
-            markdown: "\(output)\n\n## 建议问题\n\(questionText)"
-        )
+        guard !output.isEmpty else { return nil }
+        return InterviewEvaluation(markdown: output.joined(separator: "\n\n"))
     }
 
     public static func section(
@@ -49,16 +86,18 @@ public enum CompactResumeEvaluation {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    public static func questions(in markdown: String) -> [String] {
-        section("建议问题", in: markdown)
+    public static func questions(
+        in markdown: String,
+        heading: String = "建议问题"
+    ) -> [String] {
+        section(heading, in: markdown)
             .components(separatedBy: .newlines)
             .map(cleanListPrefix)
             .filter { !$0.isEmpty }
     }
 
     private static func compact(
-        _ text: String,
-        limit: Int
+        _ text: String
     ) -> String {
         var joined = text.components(separatedBy: .newlines)
             .map(cleanListPrefix)
@@ -82,8 +121,12 @@ public enum CompactResumeEvaluation {
                 with: "",
                 options: .regularExpression
             )
-        guard joined.count > limit else { return joined }
-        return String(joined.prefix(limit - 1)) + "…"
+        return joined
+    }
+
+    private static func limited(_ text: String, to limit: Int) -> String {
+        guard text.count > limit, limit > 1 else { return text }
+        return String(text.prefix(limit - 1)) + "…"
     }
 
     private static func cleanListPrefix(_ text: String) -> String {

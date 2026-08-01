@@ -29,12 +29,15 @@ public struct HistoricalEvaluationRegenerator:
         @Sendable (URL) throws -> any InterviewAnalysisProvider
 
     private let providerFactory: ProviderFactory
+    private let rulesStore: EvaluationRulesStore
 
     public init(
+        rulesStore: EvaluationRulesStore = EvaluationRulesStore(),
         providerFactory: @escaping ProviderFactory = {
             try CodexCLIProvider(sessionDirectory: $0)
         }
     ) {
+        self.rulesStore = rulesStore
         self.providerFactory = providerFactory
     }
 
@@ -50,14 +53,17 @@ public struct HistoricalEvaluationRegenerator:
             resumeText: resumeText,
             customRequirement: customRequirement
         )
-        try evaluation.markdown.write(
-            to: directory.appendingPathComponent(
-                "evaluation-report.md"
-            ),
-            atomically: true,
-            encoding: .utf8
+        let exactEvaluation = InterviewEvaluation(
+            markdown: evaluation.markdown,
+            rulesConfiguration:
+                evaluation.rulesConfiguration ?? rulesStore.load()
         )
-        return evaluation
+        try EvaluationArtifactStore(directory: directory).save(
+            exactEvaluation,
+            reportName: "evaluation-report.md",
+            snapshotName: "evaluation-rules.json"
+        )
+        return exactEvaluation
     }
 
     private func loadTranscript(

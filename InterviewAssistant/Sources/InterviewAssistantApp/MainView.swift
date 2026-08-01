@@ -11,6 +11,7 @@ struct MainView: View {
     @State private var microphoneActive = false
     @State private var showsResumeImporter = false
     @State private var showsHistory = false
+    @State private var showsEvaluationRules = false
     @State private var isResumeDropTarget = false
     @State private var showsEvaluationRefresh = false
     @State private var evaluationRefreshRequirement = ""
@@ -55,6 +56,9 @@ struct MainView: View {
         .sheet(isPresented: $showsHistory) {
             HistoryBrowserView(store: InterviewHistoryStore())
         }
+        .sheet(isPresented: $showsEvaluationRules) {
+            EvaluationRulesView()
+        }
         .sheet(isPresented: $showsEvaluationRefresh) {
             evaluationRefreshSheet
         }
@@ -86,6 +90,14 @@ struct MainView: View {
                 }
 
                 Spacer()
+                Button {
+                    showsEvaluationRules = true
+                } label: {
+                    Label(
+                        "评价规则",
+                        systemImage: "slider.horizontal.3"
+                    )
+                }
                 Button {
                     showsHistory = true
                 } label: {
@@ -309,9 +321,28 @@ struct MainView: View {
     private func evaluationView(
         _ evaluation: InterviewEvaluation
     ) -> some View {
-        let scorecard = controller.evaluationTitle == "本次面试评价"
-            ? InterviewEvaluationScorecard.parse(from: evaluation.markdown)
+        let configuration = rulesForCurrentEvaluation()
+        let configuredScorecard = controller.evaluationTitle
+            == "本次面试评价"
+            ? InterviewEvaluationScorecard.parse(
+                from: evaluation.markdown,
+                rules: configuration.interview
+            )
             : nil
+        let scorecard = configuredScorecard
+            ?? (controller.evaluationTitle == "本次面试评价"
+                ? InterviewEvaluationScorecard.parse(
+                    from: evaluation.markdown
+                )
+                : nil)
+        let configuredSections = controller.evaluationTitle == "简历初评"
+            ? effectiveResumeSections(
+                configuration.resume,
+                markdown: evaluation.markdown
+            )
+            : (scorecard == nil
+                ? effectiveInterviewSections(.default)
+                : configuration.interview.sections)
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 sectionHeader(
@@ -349,51 +380,132 @@ struct MainView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let scorecard {
-                        recommendationCard(scorecard)
-                        dimensionScores(scorecard.dimensions)
-                        evaluationSection(
-                            "逻辑分析",
-                            text: scorecard.logicFindings
-                                .map { "- \($0)" }
-                                .joined(separator: "\n"),
-                            color: .indigo
-                        )
-                    }
-                    evaluationSection(
-                        "总评",
-                        text: section("总评", in: evaluation.markdown),
-                        color: .blue
-                    )
-                    evaluationSection(
-                        "优势",
-                        text: section("优势", in: evaluation.markdown),
-                        color: .green
-                    )
-                    evaluationSection(
-                        "劣势",
-                        text: section("劣势", in: evaluation.markdown),
-                        color: .orange
-                    )
-                    evaluationSection(
-                        "风险",
-                        text: section("风险", in: evaluation.markdown),
-                        color: .red
-                    )
-                    if controller.evaluationTitle == "简历初评" {
-                        evaluationSection(
-                            "建议问题",
-                            text: section(
-                                "建议问题",
-                                in: evaluation.markdown
-                            ),
-                            color: .purple
+                    ForEach(configuredSections) { configured in
+                        configuredEvaluationSection(
+                            configured,
+                            scorecard: scorecard,
+                            markdown: evaluation.markdown
                         )
                     }
                 }
             }
         }
         .padding(18)
+    }
+
+    private func rulesForCurrentEvaluation()
+        -> EvaluationRulesConfiguration {
+        let artifact: InterviewEvaluation?
+        if controller.evaluationTitle == "简历初评" {
+            artifact = try? EvaluationArtifactStore(
+                directory: CurrentResumeStore().root
+            ).load(
+                reportName: "resume-evaluation.md",
+                snapshotName: "resume-evaluation-rules.json"
+            )
+        } else if let directory = controller.lastSessionDirectory {
+            artifact = try? EvaluationArtifactStore(
+                directory: directory
+            ).load(
+                reportName: "evaluation-report.md",
+                snapshotName: "evaluation-rules.json"
+            )
+        } else {
+            artifact = nil
+        }
+        if let rules = artifact?.rulesConfiguration {
+            do {
+                try EvaluationRulesValidator.validate(rules)
+                return rules
+            } catch {
+                return .default
+            }
+        }
+        return .default
+    }
+
+    @ViewBuilder
+    private func configuredEvaluationSection(
+        _ configured: EvaluationSectionRule,
+        scorecard: InterviewEvaluationScorecard?,
+        markdown: String
+    ) -> some View {
+        switch configured.kind {
+        case .conclusion:
+            if let scorecard {
+                recommendationCard(scorecard)
+            }
+        case .totalScore:
+            if let scorecard {
+                totalScoreCard(configured.title, score: scorecard.totalScore)
+            }
+        case .dimensionScores:
+            if let scorecard {
+                dimensionScores(
+                    configured.title,
+                    dimensions: scorecard.dimensions
+                )
+            }
+        case .logicAnalysis:
+            if let scorecard {
+                evaluationSection(
+                    configured.title,
+                    text: scorecard.logicFindings
+                        .map { "- \($0)" }
+                        .joined(separator: "\n"),
+                    color: sectionColor(configured.kind)
+                )
+            }
+        default:
+            evaluationSection(
+                configured.title,
+                text: section(configured.title, in: markdown),
+                color: sectionColor(configured.kind)
+            )
+        }
+    }
+
+    private func effectiveInterviewSections(
+        _ rules: InterviewEvaluationRules
+    ) -> [EvaluationSectionRule] {
+        rules.sections.filter {
+            ![
+                EvaluationSectionKind.conclusion,
+                .totalScore,
+                .dimensionScores,
+                .logicAnalysis
+            ].contains($0.kind)
+        }
+    }
+
+    private func effectiveResumeSections(
+        _ rules: ResumeEvaluationRules,
+        markdown: String
+    ) -> [EvaluationSectionRule] {
+        let hasConfiguredSummary = rules.sections
+            .first { $0.kind == .summary }
+            .map { !section($0.title, in: markdown).isEmpty }
+            ?? false
+        return hasConfiguredSummary
+            ? rules.sections
+            : ResumeEvaluationRules.default.sections
+    }
+
+    private func sectionColor(_ kind: EvaluationSectionKind) -> Color {
+        switch kind {
+        case .summary:
+            .blue
+        case .strengths:
+            .green
+        case .weaknesses:
+            .orange
+        case .risks:
+            .red
+        case .questions:
+            .purple
+        default:
+            .indigo
+        }
     }
 
     private func recommendationCard(
@@ -412,10 +524,6 @@ struct MainView: View {
                 .foregroundStyle(color)
 
                 Spacer()
-
-                Text("\(scorecard.totalScore)/100")
-                    .font(.title2.bold())
-                    .monospacedDigit()
                 Text("置信度：\(scorecard.confidence.rawValue)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -436,11 +544,32 @@ struct MainView: View {
         }
     }
 
+    private func totalScoreCard(
+        _ title: String,
+        score: Int
+    ) -> some View {
+        HStack {
+            Label(title, systemImage: "gauge.with.dots.needle.67percent")
+                .font(.headline)
+                .foregroundStyle(.blue)
+            Spacer()
+            Text("\(score)/100")
+                .font(.title2.bold())
+                .monospacedDigit()
+        }
+        .padding(14)
+        .background(
+            Color.blue.opacity(0.06),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+    }
+
     private func dimensionScores(
-        _ dimensions: [InterviewEvaluationDimension]
+        _ title: String,
+        dimensions: [InterviewEvaluationDimension]
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("分项评分", systemImage: "chart.bar.fill")
+            Label(title, systemImage: "chart.bar.fill")
                 .font(.headline)
                 .foregroundStyle(.blue)
 

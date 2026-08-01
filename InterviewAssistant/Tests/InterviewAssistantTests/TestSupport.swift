@@ -36,6 +36,11 @@ enum TestMain {
             + IntelligenceModelTests.all
             + TranscriptStoreTests.all
             + AnalysisPromptTests.all
+            + EvaluationRulesTests.all
+            + EvaluationRulesEditorModelTests.all
+            + EvaluationArtifactStoreTests.all
+            + EvaluationPromptComposerTests.all
+            + CodexCLIProviderRulesTests.all
             + InterviewIntelligencePipelineTests.all
             + CurrentResumeStoreTests.all
             + ResumeTextExtractorTests.all

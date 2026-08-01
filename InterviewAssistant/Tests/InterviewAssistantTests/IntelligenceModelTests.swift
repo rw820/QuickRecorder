@@ -149,6 +149,233 @@ enum IntelligenceModelTests {
                 !evaluation.markdown.contains("## 综合评分"),
                 "旧版评价不应生成虚构分数"
             )
+        },
+        TestCase(name: "自定义评分维度阈值和板块可以解析") {
+            var rules = relaxedInterviewRules()
+            rules.dimensions[0].title = "分析逻辑"
+            rules.dimensions[0].maximum = 30
+            rules.dimensions[1].maximum = 15
+            rules.thresholds = DecisionThresholdRules(
+                recommendedMinimum: 80,
+                reviewMinimum: 65
+            )
+            rules.sections[4].title = "综合判断"
+            rules.sections.append(
+                EvaluationSectionRule(
+                    id: "collaboration",
+                    kind: .custom,
+                    title: "协作表现",
+                    instruction: "评价跨团队协作",
+                    maximumItems: 2,
+                    minimumCharacters: 5,
+                    maximumCharacters: 60,
+                    isRequired: true
+                )
+            )
+            let markdown = scoredMarkdown()
+                .replacingOccurrences(
+                    of: "逻辑表达：11/25",
+                    with: "分析逻辑：16/30"
+                )
+                .replacingOccurrences(
+                    of: "岗位匹配：13/20",
+                    with: "岗位匹配：8/15"
+                )
+                .replacingOccurrences(of: "## 总评", with: "## 综合判断")
+                + "\n\n## 协作表现\n- 能推动财务与研发协作。"
+
+            guard let evaluation = CompactInterviewEvaluation.normalize(
+                markdown,
+                rules: rules
+            ), let scorecard = InterviewEvaluationScorecard.parse(
+                from: evaluation.markdown,
+                rules: rules
+            ) else {
+                throw TestFailure(description: "自定义评价应成功解析")
+            }
+
+            try expect(scorecard.totalScore == 58, "应按自定义维度求和")
+            try expect(
+                scorecard.recommendation == .notRecommended,
+                "58分不应超过自定义复核线"
+            )
+            try expect(
+                evaluation.markdown.contains("## 协作表现"),
+                "应保留自定义输出板块"
+            )
+            var reordered = rules
+            reordered.sections.swapAt(0, 4)
+            guard let reorderedEvaluation =
+                CompactInterviewEvaluation.normalize(
+                    markdown,
+                    rules: reordered
+                )
+            else {
+                throw TestFailure(description: "重排评价应成功解析")
+            }
+            let summaryRange = reorderedEvaluation.markdown.range(
+                of: "## 综合判断"
+            )
+            let conclusionRange = reorderedEvaluation.markdown.range(
+                of: "## 结论"
+            )
+            try expect(
+                summaryRange?.lowerBound ?? reorderedEvaluation.markdown.endIndex
+                    < conclusionRange?.lowerBound
+                        ?? reorderedEvaluation.markdown.endIndex,
+                "保存结果应遵循配置的板块顺序"
+            )
+        },
+        TestCase(name: "面试评价严格执行理由和板块长度") {
+            var rules = EvaluationRulesConfiguration.default.interview
+            rules.dimensions[0].reasonMinimumCharacters = 30
+            try expect(
+                CompactInterviewEvaluation.normalize(
+                    scoredMarkdown(),
+                    rules: rules
+                ) == nil,
+                "过短的评分理由不应被接受"
+            )
+            rules = relaxedInterviewRules()
+            guard let summaryIndex = rules.sections.firstIndex(
+                where: { $0.kind == .summary }
+            ) else {
+                throw TestFailure(description: "缺少总评规则")
+            }
+            rules.sections[summaryIndex].minimumCharacters = 80
+            try expect(
+                CompactInterviewEvaluation.normalize(
+                    scoredMarkdown(),
+                    rules: rules
+                ) == nil,
+                "过短的总评不应被接受"
+            )
+            rules = relaxedInterviewRules()
+            guard let totalIndex = rules.sections.firstIndex(
+                where: { $0.kind == .totalScore }
+            ) else {
+                throw TestFailure(description: "缺少综合评分规则")
+            }
+            rules.sections[totalIndex].maximumCharacters = 3
+            try expect(
+                CompactInterviewEvaluation.normalize(
+                    scoredMarkdown(),
+                    rules: rules
+                ) == nil,
+                "综合评分也应执行板块长度"
+            )
+        },
+        TestCase(name: "逻辑分析条数跟随配置") {
+            var rules = relaxedInterviewRules()
+            guard let index = rules.sections.firstIndex(
+                where: { $0.kind == .logicAnalysis }
+            ) else {
+                throw TestFailure(description: "缺少逻辑分析规则")
+            }
+            rules.sections[index].maximumItems = 1
+            rules.sections[index].minimumCharacters = 1
+            guard let evaluation = CompactInterviewEvaluation.normalize(
+                scoredMarkdown(),
+                rules: rules
+            ) else {
+                throw TestFailure(description: "应解析评价")
+            }
+            try expect(
+                CompactInterviewEvaluation.items(
+                    in: CompactInterviewEvaluation.section(
+                        "逻辑分析",
+                        in: evaluation.markdown
+                    )
+                ).count == 1,
+                "逻辑分析应遵循最大条数"
+            )
+        },
+        TestCase(name: "简历初评支持自定义标题和问题数量") {
+            var rules = relaxedResumeRules()
+            rules.questionCount = 3
+            if let questionIndex = rules.sections.firstIndex(
+                where: { $0.kind == .questions }
+            ) {
+                rules.sections[questionIndex].maximumItems = 3
+            }
+            rules.sections[0].title = "匹配判断"
+            let output = """
+            ## 匹配判断
+            经历与岗位基本匹配。
+            ## 优势
+            财务产品经验较完整。
+            ## 劣势
+            技术深度信息不足。
+            ## 风险
+            成果归因需要确认。
+            ## 建议问题
+            1. 你的个人贡献是什么？
+            2. 成果如何计算？
+            3. 最大难点是什么？
+            """
+
+            guard let evaluation = CompactResumeEvaluation.normalize(
+                output,
+                rules: rules
+            ) else {
+                throw TestFailure(description: "自定义简历评价应解析")
+            }
+            try expect(
+                evaluation.markdown.contains("## 匹配判断"),
+                "应保留自定义标题"
+            )
+            try expect(
+                CompactResumeEvaluation.questions(
+                    in: evaluation.markdown,
+                    heading: "建议问题"
+                ).count == 3,
+                "应保留配置的问题数量"
+            )
+        },
+        TestCase(name: "简历初评严格执行内容和问题长度") {
+            var rules = EvaluationRulesConfiguration.default.resume
+            rules.sections = rules.sections.map { section in
+                var changed = section
+                changed.minimumCharacters = 10
+                return changed
+            }
+            rules.questionCount = 1
+            let output = """
+            ## 总评
+            太短
+            ## 建议问题
+            1. 太短？
+            """
+            try expect(
+                CompactResumeEvaluation.normalize(
+                    output,
+                    rules: rules
+                ) == nil,
+                "过短的简历评价不应被接受"
+            )
+            rules = relaxedResumeRules()
+            rules.questionCount = 5
+            let questionIndex = rules.sections.firstIndex {
+                $0.kind == .questions
+            }!
+            rules.sections[questionIndex].maximumItems = 2
+            let fiveQuestions = """
+            ## 总评
+            具备相关经验。
+            ## 建议问题
+            1. 问题一是什么？
+            2. 问题二是什么？
+            3. 问题三是什么？
+            4. 问题四是什么？
+            5. 问题五是什么？
+            """
+            try expect(
+                CompactResumeEvaluation.normalize(
+                    fiveQuestions,
+                    rules: rules
+                ) == nil,
+                "固定问题数与板块上限冲突时不应接受"
+            )
         }
     ]
 
@@ -160,6 +387,32 @@ enum IntelligenceModelTests {
             throw TestFailure(description: "应成功解析完整评分评价")
         }
         return scorecard
+    }
+
+    private static func relaxedInterviewRules()
+        -> InterviewEvaluationRules {
+        var rules = EvaluationRulesConfiguration.default.interview
+        rules.dimensions = rules.dimensions.map { dimension in
+            var changed = dimension
+            changed.reasonMinimumCharacters = 1
+            return changed
+        }
+        rules.sections = rules.sections.map { section in
+            var changed = section
+            changed.minimumCharacters = 1
+            return changed
+        }
+        return rules
+    }
+
+    private static func relaxedResumeRules() -> ResumeEvaluationRules {
+        var rules = EvaluationRulesConfiguration.default.resume
+        rules.sections = rules.sections.map { section in
+            var changed = section
+            changed.minimumCharacters = 1
+            return changed
+        }
+        return rules
     }
 
     private static func scoredMarkdown() -> String {
