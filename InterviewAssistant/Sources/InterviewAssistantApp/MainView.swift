@@ -135,6 +135,17 @@ struct MainView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    if controller.isRefreshingResumeEvaluation {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if controller.canRetryResumeEvaluation {
+                        Button("重试初评") {
+                            Task {
+                                await controller.refreshResumeEvaluation()
+                            }
+                        }
+                        .font(.caption)
+                    }
                     Button("清除") {
                         Task { await controller.clearResume() }
                     }
@@ -143,6 +154,7 @@ struct MainView: View {
                     .disabled(
                         controller.state != .idle
                             || controller.isImportingResume
+                            || controller.isRefreshingResumeEvaluation
                     )
                 }
                 .padding(9)

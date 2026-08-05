@@ -42,16 +42,22 @@ private actor InterviewEvaluationRefresherSpy:
 
 private actor ResumeImportServiceSpy: ResumeImportServicing {
     private let result: ResumeImportResult
+    private let restoreResult: ResumeImportResult?
     private let refreshedEvaluation: InterviewEvaluation
+    private let refreshDelay: Duration?
     private var cleared = false
     private var refreshCount = 0
     private var latestRefreshRequirement: String?
 
     init(
         result: ResumeImportResult,
-        refreshedEvaluation: InterviewEvaluation? = nil
+        refreshedEvaluation: InterviewEvaluation? = nil,
+        restoreResult: ResumeImportResult? = nil,
+        refreshDelay: Duration? = nil
     ) {
         self.result = result
+        self.restoreResult = restoreResult
+        self.refreshDelay = refreshDelay
         self.refreshedEvaluation =
             refreshedEvaluation ?? result.evaluation
             ?? InterviewEvaluation(markdown: "")
@@ -62,7 +68,7 @@ private actor ResumeImportServiceSpy: ResumeImportServicing {
     }
 
     func restore() async throws -> ResumeImportResult? {
-        nil
+        restoreResult
     }
 
     func refreshEvaluation() async throws -> InterviewEvaluation {
@@ -75,6 +81,9 @@ private actor ResumeImportServiceSpy: ResumeImportServicing {
     ) async throws -> InterviewEvaluation {
         refreshCount += 1
         latestRefreshRequirement = customRequirement
+        if let refreshDelay {
+            try await Task.sleep(for: refreshDelay)
+        }
         return refreshedEvaluation
     }
 
@@ -274,6 +283,104 @@ enum SessionControllerTests {
                 requirement == "重点核对项目成果",
                 "控制器应转发手工刷新要求"
             )
+        },
+        TestCase(name: "初评失败后可以直接重试") {
+            let document = ResumeDocument(
+                originalFileName: "候选人.pdf",
+                text: "简历",
+                localFileURL: URL(fileURLWithPath: "/tmp/candidate.pdf")
+            )
+            let evaluation = InterviewEvaluation(
+                markdown: "## 总评\n已生成\n## 建议问题\n1. 问题"
+            )
+            let service = ResumeImportServiceSpy(
+                result: ResumeImportResult(
+                    document: document,
+                    evaluation: nil,
+                    warning: "初评生成失败"
+                ),
+                refreshedEvaluation: evaluation
+            )
+            let controller = SessionController(
+                engine: RecordingEngineSpy(),
+                resumeService: service
+            )
+            await controller.importResume(
+                from: URL(fileURLWithPath: "/tmp/source.pdf")
+            )
+
+            try expect(
+                controller.canRetryResumeEvaluation,
+                "简历已保存但无评价时应允许重试"
+            )
+            await controller.refreshResumeEvaluation()
+            try expect(
+                controller.evaluation == evaluation,
+                "重试成功后应显示评价"
+            )
+        },
+        TestCase(name: "重启恢复未完成初评时仍可重试") {
+            let document = ResumeDocument(
+                originalFileName: "候选人.pdf",
+                text: "简历",
+                localFileURL: URL(fileURLWithPath: "/tmp/candidate.pdf")
+            )
+            let restored = ResumeImportResult(
+                document: document,
+                evaluation: nil,
+                warning: nil
+            )
+            let service = ResumeImportServiceSpy(
+                result: restored,
+                restoreResult: restored
+            )
+            let controller = SessionController(
+                engine: RecordingEngineSpy(),
+                resumeService: service
+            )
+            try? await Task.sleep(for: .milliseconds(20))
+
+            try expect(
+                controller.canRetryResumeEvaluation,
+                "恢复出有简历无评价时应保留重试入口"
+            )
+        },
+        TestCase(name: "刷新初评期间不能清除简历") {
+            let document = ResumeDocument(
+                originalFileName: "候选人.pdf",
+                text: "简历",
+                localFileURL: URL(fileURLWithPath: "/tmp/candidate.pdf")
+            )
+            let oldEvaluation = InterviewEvaluation(markdown: "旧评价")
+            let service = ResumeImportServiceSpy(
+                result: ResumeImportResult(
+                    document: document,
+                    evaluation: oldEvaluation,
+                    warning: nil
+                ),
+                refreshedEvaluation: InterviewEvaluation(
+                    markdown: "新评价"
+                ),
+                refreshDelay: .milliseconds(100)
+            )
+            let controller = SessionController(
+                engine: RecordingEngineSpy(),
+                resumeService: service
+            )
+            await controller.importResume(
+                from: URL(fileURLWithPath: "/tmp/source.pdf")
+            )
+            let refresh = Task {
+                await controller.refreshResumeEvaluation()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            await controller.clearResume()
+            try expect(
+                controller.resume == document,
+                "刷新期间不应清除简历"
+            )
+            await refresh.value
         },
         TestCase(name: "刷新会更新已结束的面试评价") {
             let pair = AsyncStream.makeStream(of: AssistantEvent.self)

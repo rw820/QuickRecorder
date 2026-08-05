@@ -76,6 +76,46 @@ enum CodexCLIProviderRulesTests {
                 ),
                 "生成器不应提前改写历史规则快照"
             )
+        },
+        TestCase(name: "简历初评格式不完整时自动纠正一次") {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: true
+            )
+            let executable = root.appendingPathComponent("retry-codex.zsh")
+            try resumeRetryScript.write(
+                to: executable,
+                atomically: true,
+                encoding: .utf8
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: executable.path
+            )
+            let session = root.appendingPathComponent("Session")
+            let provider = try CodexCLIProvider(
+                sessionDirectory: session,
+                executableURL: executable
+            )
+
+            let evaluation = try await provider.generateResumeEvaluation(
+                from: "候选人具备产品经验"
+            )
+
+            try expect(
+                CompactResumeEvaluation.questions(
+                    in: evaluation.markdown
+                ).count == 5,
+                "纠正后应得到五个问题"
+            )
+            let calls = try String(
+                contentsOf: session.appendingPathComponent("calls.txt"),
+                encoding: .utf8
+            )
+            try expect(calls == "2", "格式失败后只应重试一次")
         }
     ]
 
@@ -120,5 +160,39 @@ enum CodexCLIProviderRulesTests {
 
     ## 风险
     - 个人贡献待确认。' > "$output"
+    """
+
+    private static let resumeRetryScript = """
+    #!/bin/zsh
+    output=""
+    while [[ $# -gt 0 ]]; do
+      if [[ "$1" == "--output-last-message" ]]; then
+        shift
+        output="$1"
+      fi
+      shift
+    done
+    calls=0
+    [[ -f "$PWD/calls.txt" ]] && calls=$(/bin/cat "$PWD/calls.txt")
+    calls=$((calls + 1))
+    /usr/bin/printf '%s' "$calls" > "$PWD/calls.txt"
+    questions='1. 你的个人贡献是什么？
+    2. 成果如何量化？
+    3. 最大项目难点是什么？
+    4. 如何安排需求优先级？'
+    if [[ "$calls" -gt 1 ]]; then
+      questions="$questions
+    5. 为什么选择这个岗位？"
+    fi
+    /usr/bin/printf '%s' "## 总评
+    经历与岗位基本匹配。
+    ## 优势
+    有相关项目经验。
+    ## 劣势
+    量化成果较少。
+    ## 风险
+    个人贡献需确认。
+    ## 建议问题
+    $questions" > "$output"
     """
 }

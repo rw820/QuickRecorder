@@ -47,6 +47,14 @@ public final class SessionController: ObservableObject {
             && interviewEvaluationRefresher != nil
     }
 
+    public var canRetryResumeEvaluation: Bool {
+        state == .idle
+            && resume != nil
+            && evaluation == nil
+            && resumeService != nil
+            && !isRefreshingEvaluation
+    }
+
     private let engine: any RecordingEngine
     private let store: SessionDirectoryStore
     private let resumeService: (any ResumeImportServicing)?
@@ -150,7 +158,13 @@ public final class SessionController: ObservableObject {
     }
 
     public func clearResume() async {
-        guard state == .idle, let resumeService else { return }
+        guard
+            state == .idle,
+            !isRefreshingResumeEvaluation,
+            let resumeService
+        else {
+            return
+        }
         do {
             try await resumeService.clear()
             resume = nil
@@ -188,7 +202,9 @@ public final class SessionController: ObservableObject {
             resumeStatus = "简历初评已刷新"
         } catch {
             warning = "刷新失败：\(error.localizedDescription)"
-            resumeStatus = "保留原简历初评"
+            resumeStatus = evaluation == nil
+                ? "简历初评仍未生成"
+                : "保留原简历初评"
         }
     }
 

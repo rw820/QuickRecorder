@@ -63,22 +63,41 @@ public struct CodexCLIProvider: InterviewAnalysisProvider, Sendable {
         customRequirement: String?
     ) async throws -> InterviewEvaluation {
         let configuration = rulesStore.load()
+        let prompt = AnalysisPrompts.resumeEvaluation(
+            resume: String(resumeText.prefix(40_000)),
+            customRequirement: customRequirement,
+            rules: configuration.resume
+        )
         let output = try await run(
-            prompt: AnalysisPrompts.resumeEvaluation(
-                resume: String(resumeText.prefix(40_000)),
-                customRequirement: customRequirement,
-                rules: configuration.resume
-            ),
+            prompt: prompt,
+            model: evaluationModel,
+            timeout: 120
+        )
+        if let normalized = CompactResumeEvaluation.normalize(
+            output,
+            rules: configuration.resume
+        ) {
+            return InterviewEvaluation(
+                markdown: normalized.markdown,
+                rulesConfiguration: configuration
+            )
+        }
+
+        let correctedOutput = try await run(
+            prompt: """
+            \(prompt)
+
+            上一次输出格式不完整。请重新生成，必须保留全部标题，并严格输出 \(configuration.resume.questionCount) 个建议问题。内容可以简短，不要因为凑字数写空话。
+            """,
             model: evaluationModel,
             timeout: 120
         )
         guard let normalized = CompactResumeEvaluation.normalize(
-            output,
+            correctedOutput,
             rules: configuration.resume
-        )
-        else {
+        ) else {
             throw CodexCLIProviderError.invalidOutput(
-                "简历初评不符合当前评价规则"
+                "缺少规定板块或建议问题不足 \(configuration.resume.questionCount) 个"
             )
         }
         return InterviewEvaluation(

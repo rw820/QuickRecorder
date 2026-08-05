@@ -332,26 +332,47 @@ enum IntelligenceModelTests {
                 "应保留配置的问题数量"
             )
         },
-        TestCase(name: "简历初评严格执行内容和问题长度") {
+        TestCase(name: "简历初评接受简短但结构完整的内容") {
             var rules = EvaluationRulesConfiguration.default.resume
-            rules.sections = rules.sections.map { section in
-                var changed = section
-                changed.minimumCharacters = 10
-                return changed
-            }
-            rules.questionCount = 1
             let output = """
             ## 总评
-            太短
+            经历与岗位基本匹配。
+            ## 优势
+            有相关项目经验。
+            ## 劣势
+            量化成果较少。
+            ## 风险
+            个人贡献需确认。
             ## 建议问题
-            1. 太短？
+            1. 你的个人贡献是什么？
+            2. 成果如何量化？
+            3. 最大项目难点是什么？
+            4. 如何安排需求优先级？
+            5. 为什么选择这个岗位？
             """
             try expect(
                 CompactResumeEvaluation.normalize(
                     output,
                     rules: rules
+                ) != nil,
+                "结构完整时不应仅因字数不足丢弃整份评价"
+            )
+            let missingSection = """
+            ## 总评
+            经历与岗位基本匹配。
+            ## 建议问题
+            1. 你的个人贡献是什么？
+            2. 成果如何量化？
+            3. 最大项目难点是什么？
+            4. 如何安排需求优先级？
+            5. 为什么选择这个岗位？
+            """
+            try expect(
+                CompactResumeEvaluation.normalize(
+                    missingSection,
+                    rules: rules
                 ) == nil,
-                "过短的简历评价不应被接受"
+                "配置中存在的评价板块缺失时应触发纠正"
             )
             rules = relaxedResumeRules()
             rules.questionCount = 5

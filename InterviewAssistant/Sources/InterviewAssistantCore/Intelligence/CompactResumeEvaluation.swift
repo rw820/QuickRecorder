@@ -35,11 +35,6 @@ public enum CompactResumeEvaluation {
                     return nil
                 }
                 let retained = Array(suggested.prefix(rules.questionCount))
-                guard retained.allSatisfy({
-                    $0.count >= configured.minimumCharacters
-                }) else {
-                    return nil
-                }
                 let text = retained
                     .enumerated()
                     .map {
@@ -52,13 +47,7 @@ public enum CompactResumeEvaluation {
             let cleaned = compact(
                 section(configured.title, in: markdown)
             )
-            if cleaned.isEmpty {
-                guard !configured.isRequired else { return nil }
-                continue
-            }
-            guard cleaned.count >= configured.minimumCharacters else {
-                return nil
-            }
+            guard !cleaned.isEmpty else { return nil }
             let value = limited(
                 cleaned,
                 to: configured.maximumCharacters
